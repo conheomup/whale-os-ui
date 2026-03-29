@@ -931,7 +931,7 @@ export default function WhaleOS() {
   const prevAssetsRef = useRef(null);
   useEffect(() => {
     if (!ready) return;
-    const currentKey = assets.map(a => a.ticker).sort().join(",");
+    const currentKey = [...assets].map(a => a.ticker).sort().join(",");
     if (prevAssetsRef.current !== null && prevAssetsRef.current !== currentKey) {
       console.log("[WhaleOS] Assets changed, triggering immediate price fetch");
       fetchMarketData(assets.map(a => a.ticker));
@@ -1127,7 +1127,7 @@ export default function WhaleOS() {
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {allHoldings.sort((a, b) => b.value - a.value).map((r, i) => (
+                  {[...allHoldings].sort((a, b) => b.value - a.value).map((r, i) => (
                     <tr key={r.ticker} style={{ borderBottom: `1px solid ${C.border}15` }}>
                       <td style={{ padding: "6px 8px", fontWeight: 700, color: DONUT_COLORS[i % DONUT_COLORS.length] }}>{r.ticker}</td>
                       <td style={{ textAlign: "right", padding: "6px 8px", color: C.text }}>${fmt(r.value)}</td>
