@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Treemap } from "recharts";
 import { createClient } from '@supabase/supabase-js';
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = "https://whale-backend-n3i3.onrender.com/api";
 
 // ═══════════════════════════════════════════════════════════════
 //  SUPABASE CLIENT
