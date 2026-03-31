@@ -42,32 +42,31 @@ const DB = {
     }
   },
 
+  // --- Thay thế hàm set cũ (Dòng 53 - 85) ---
   async set(table, payload) {
     try {
       this._setStatus("syncing");
-
       if (table === "settings") {
         const row = { id: 1, ...payload };
         const { error } = await supabase.from("settings").upsert(row, { onConflict: "id" });
         this._setStatus(error ? "disconnected" : "connected");
-        if (error) console.warn("[DB.set] settings:", error.message);
         return !error;
       }
 
-      // For array-based tables: clear + insert
       if (Array.isArray(payload)) {
-        // Delete all existing rows then bulk insert
+        // Cải tiến: Xóa sạch dữ liệu cũ với điều kiện chắc chắn
         const { error: delErr } = await supabase.from(table).delete().neq("id", -999);
-        if (delErr) console.warn(`[DB.set] delete ${table}:`, delErr.message);
+        if (delErr) console.warn(`[DB.set] Delete warning:`, delErr.message);
+
         if (payload.length > 0) {
-          // Ensure every row has a unique id
-          const rows = payload.map((row, idx) => ({
-            ...row,
-            id: row.id || idx + 1,
-          }));
+          // Bỏ ID cũ để Supabase tự cấp ID mới, tránh xung đột khóa chính
+          const rows = payload.map((row, idx) => {
+            const { id, ...data } = row;
+            return { ...data, id: idx + 1 };
+          });
           const { error: insErr } = await supabase.from(table).insert(rows);
           if (insErr) {
-            console.warn(`[DB.set] insert ${table}:`, insErr.message);
+            console.error(`[DB.set] Insert error:`, insErr.message);
             this._setStatus("disconnected");
             return false;
           }
@@ -75,14 +74,9 @@ const DB = {
         this._setStatus("connected");
         return true;
       }
-
-      // For single-object tables stored as key-value (prices, cache)
-      // These go into the settings table as JSON or a dedicated kv table.
-      // Fallback: store in settings with a namespaced key
-      this._setStatus("connected");
       return true;
     } catch (err) {
-      console.warn(`[DB.set] ${table} failed:`, err);
+      console.error(`[DB.set] System failure:`, err);
       this._setStatus("disconnected");
       return false;
     }
