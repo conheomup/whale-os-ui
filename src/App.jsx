@@ -1563,6 +1563,11 @@ export default function WhaleOS() {
     const totalDivs = dividends.reduce((s, d) => s + d.amount, 0);
     const monthActions = actions.filter(a => a.month_year === actionMonth);
 
+    // --- Logic tính toán SBLOC ---
+    const safeLtvLimit = 0.25; // Ngưỡng an toàn 25%
+    const maxSafeLoan = taxable.total * safeLtvLimit;
+    const remainingSafeCapacity = Math.max(0, maxSafeLoan - latestDebt);
+
     return (
       <>
         <TabBar tabs={[
@@ -1691,6 +1696,24 @@ export default function WhaleOS() {
                 ]} />
               </div>
               <div style={{ flex: "1 1 240px" }}>
+                {/* --- Dán khối Intel vào đây --- */}
+                <div style={{ background: `linear-gradient(135deg, ${C.card}, #1E1B4B)`, border: `1px solid ${C.purple}40`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, marginBottom: 8, textTransform: "uppercase" }}>🛡️ Safe Borrowing Intel</div>
+                  <Grid cols={2} gap={10}>
+                    <div>
+                      <div style={{ fontSize: 10, color: C.textDim }}>MAX SAFE LOAN (25%)</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>${fmt(maxSafeLoan)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: C.textDim }}>AVAILABLE</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: C.green }}>${fmt(remainingSafeCapacity)}</div>
+                    </div>
+                  </Grid>
+                  <div style={{ marginTop: 10, fontSize: 11, color: C.textDim, fontStyle: "italic" }}>
+                    Dựa trên NAV: ${fmt(taxable.total)}. Bạn có thể vay thêm <span style={{ color: C.cyan, fontWeight: 700 }}>${fmt(remainingSafeCapacity)}</span> an toàn.
+                </div>
+              </div>
+
                 <Section title="Update SBLOC Debt">
                   <InputField label="Date" type="date" value={debtForm.date} onChange={v => setDebtForm({ ...debtForm, date: v })} />
                   <InputField label="Current Debt ($)" type="number" value={debtForm.amount} onChange={v => setDebtForm({ ...debtForm, amount: v })} step="100" />
