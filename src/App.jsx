@@ -568,61 +568,60 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
-  const [hovered, setHovered] = useState(null);
 
-  const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }) => {
-    if (percent < 0.04) return null;
+  // Hàm vẽ nhãn và đường dẫn (callout lines) ra bên ngoài
+  const renderCustomizedLabel = (props) => {
+    const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
+    if (percent < 0.03) return null; // Không hiện mã quá nhỏ để tránh đè nhau
+
     const RADIAN = Math.PI / 180;
-    const radius = innerRadius + (outerRadius - innerRadius) * 0.55;
-    const x = cx + radius * Math.cos(-midAngle * RADIAN);
-    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    const sin = Math.sin(-RADIAN * midAngle);
+    const cos = Math.cos(-RADIAN * midAngle);
+    
+    const sx = cx + (outerRadius + 5) * cos;
+    const sy = cy + (outerRadius + 5) * sin;
+    const mx = cx + (outerRadius + 20) * cos;
+    const my = cy + (outerRadius + 20) * sin;
+    const ex = mx + (cos >= 0 ? 1 : -1) * 22;
+    const ey = my;
+    const textAnchor = cos >= 0 ? 'start' : 'end';
+
+    const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
+
     return (
-      <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight="700" fontFamily="'IBM Plex Mono', monospace" style={{ textShadow: "0 1px 3px rgba(0,0,0,0.7)" }}>
-        {(percent * 100).toFixed(0)}%
-      </text>
+      <g>
+        <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
+        <circle cx={ex} cy={ey} r={2.5} fill={color} />
+        <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} textAnchor={textAnchor} fill={C.text} fontSize={11} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
+          {`${payload.ticker} (${(percent * 100).toFixed(0)}%)`}
+        </text>
+      </g>
     );
   };
 
-  const handleMouseEnter = (_, index) => {
-    if (hasData && data[index]) setHovered({ ticker: data[index].ticker, value: data[index].value, weight: data[index].weight, color: DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length] });
-  };
-  const handleMouseLeave = () => setHovered(null);
-
   return (
-    <div>
-      <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2 }}>
-        {hovered ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", animation: "fadeIn 0.15s ease" }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: hovered.color, flexShrink: 0 }} />
-            <span style={{ fontWeight: 700, color: hovered.color }}>{hovered.ticker}</span>
-            <span style={{ color: C.text, fontWeight: 600 }}>${fmt(hovered.value)}</span>
-            <span style={{ color: C.textDim, fontSize: 11 }}>({(hovered.weight || 0).toFixed(1)}%)</span>
-          </div>
-        ) : (
-          <span style={{ fontSize: 11, color: C.textDim }}>Hover a slice to inspect</span>
-        )}
-      </div>
-      <div style={{ position: "relative" }}>
-        <ResponsiveContainer width="100%" height={220}>
-          <PieChart>
-            {hasData ? (
-              <Pie data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="52%" outerRadius="82%" paddingAngle={2} strokeWidth={0} label={renderLabel} labelLine={false} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave} style={{ cursor: "pointer" }}>
-                {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
-              </Pie>
-            ) : (
-              <Pie data={[{ name: "Empty", value: 1 }]} dataKey="value" cx="50%" cy="50%" innerRadius="52%" outerRadius="82%" strokeWidth={0}>
-                <Cell fill={C.border} />
-              </Pie>
-            )}
-          </PieChart>
-        </ResponsiveContainer>
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
-            {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
-          </div>
-          <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 2 }}>
-            {hasData ? `${data.length} TICKER${data.length !== 1 ? "S" : ""}` : "NO DATA"}
-          </div>
+    <div style={{ position: "relative", width: "100%" }}>
+      <ResponsiveContainer width="100%" height={320}>
+        <PieChart>
+          {hasData ? (
+            <Pie
+              data={data} dataKey="value" nameKey="ticker"
+              cx="50%" cy="50%" innerRadius="40%" outerRadius="70%"
+              paddingAngle={3} strokeWidth={0}
+              label={renderCustomizedLabel} labelLine={false}
+            >
+              {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
+            </Pie>
+          ) : (
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}>
+              <Cell fill={C.border} />
+            </Pie>
+          )}
+        </PieChart>
+      </ResponsiveContainer>
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", pointerEvents: "none" }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
       </div>
     </div>
@@ -1299,6 +1298,7 @@ export default function WhaleOS() {
   // ═══════════════════════════════════════════════════════════
   const RothShieldPage = () => {
     const [form, setForm] = useState({ date: nowDate(), ticker: "", type: "Buy", shares: 0, price: 0 });
+    const [rothSearch, setRothSearch] = useState("");
     const [rothView, setRothView] = useState("core");
     const rothTickers = assets.filter(a => a.account_type === "Roth").map(a => a.ticker);
     const autoTotal = form.shares * form.price;
@@ -1334,10 +1334,23 @@ export default function WhaleOS() {
     };
 
     // ── Recent Roth transactions for log display ────────────
-    const rothTxnLog = useMemo(() => {
-      const tickers = new Set(rothTickers);
-      return transactions.filter(t => tickers.has(t.ticker)).slice().reverse().slice(0, 15);
-    }, [transactions, rothTickers]);
+  const groupedRothTxns = useMemo(() => {
+    const groups = {};
+    const tickers = new Set(rothTickers);
+    // Lọc theo ticker hoặc loại giao dịch dựa trên ô rothSearch
+    const filtered = transactions.filter(t => 
+      tickers.has(t.ticker) && 
+      (t.ticker.toLowerCase().includes(rothSearch.toLowerCase()) || 
+       t.type.toLowerCase().includes(rothSearch.toLowerCase()))
+    );
+    
+    filtered.forEach(t => {
+      const monthYear = t.date.substring(0, 7);
+      if (!groups[monthYear]) groups[monthYear] = [];
+      groups[monthYear].push(t);
+    });
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [transactions, rothTickers, rothSearch]);
 
     return (
       <>
@@ -1407,21 +1420,43 @@ export default function WhaleOS() {
               ) : <div style={{ color: C.textDim, fontSize: 13 }}>Add Roth tickers in Settings first.</div>}
             </Section>
 
-            {/* ── Recent Transaction Log ─────────────────── */}
-            {rothTxnLog.length > 0 && (
-              <Section title="Recent Roth Transactions">
-                {rothTxnLog.map(t => (
-                  <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 10px", marginBottom: 3, fontSize: 11, gap: 6 }}>
-                    <span style={{ color: C.textDim, minWidth: 62 }}>{t.date}</span>
-                    <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
-                    <span style={{ fontWeight: 700, color: C.cyan, minWidth: 36 }}>{t.ticker}</span>
-                    <span style={{ color: C.textMid, fontFamily: "'IBM Plex Mono', monospace", flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
-                    <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace", minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
-                    <button onClick={() => deleteTransaction(t.id)} title="Delete" style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 13, padding: "0 2px", opacity: 0.6, lineHeight: 1 }}>🗑</button>
+            {/* ── Grouped Roth Transactions with Search ── */}
+            <Section title="Roth Investment History">
+              {/* Ô Search cho ROTH */}
+              <div style={{ marginBottom: 12 }}>
+                <input 
+                  value={rothSearch} 
+                  onChange={e => setRothSearch(e.target.value)} 
+                  placeholder="🔍 Search Roth ticker or type..."
+                  style={{ width: "100%", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", fontFamily: "'IBM Plex Mono', monospace" }}
+                />
+              </div>
+
+              {groupedRothTxns.length > 0 ? (
+                groupedRothTxns.map(([monthYear, txns]) => (
+                  <div key={monthYear} style={{ marginBottom: 16 }}>
+                    <div style={{ background: `${C.cyan}15`, padding: "4px 12px", borderRadius: "6px 6px 0 0", fontSize: 10, fontWeight: 800, color: C.cyan, borderLeft: `3px solid ${C.cyan}`, display: "flex", justifyContent: "space-between" }}>
+                      <span>📅 {monthYear}</span>
+                      <span>{txns.length} TXNS</span>
+                    </div>
+                    <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
+                      {[...txns].sort((a, b) => b.date.localeCompare(a.date)).map(t => (
+                        <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                          <span style={{ color: C.textDim, minWidth: 20 }}>{t.date.split('-')[2]}</span>
+                          <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
+                          <span style={{ fontWeight: 700, color: C.cyan, minWidth: 36 }}>{t.ticker}</span>
+                          <span style={{ color: C.textMid, flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
+                          <span style={{ fontWeight: 700, color: C.text, minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
+                          <button onClick={() => deleteTransaction(t.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6 }}>🗑</button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </Section>
-            )}
+                ))
+              ) : (
+                <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 20 }}>No Roth transactions found.</div>
+              )}
+            </Section>
           </div>
         </div>
       </>
@@ -1439,6 +1474,7 @@ export default function WhaleOS() {
     const [divForm, setDivForm] = useState({ date: nowDate(), ticker: "", amount: 0 });
     const [actionMonth, setActionMonth] = useState(nowYM());
     const [newAction, setNewAction] = useState("");
+    const [taxSearch, setTaxSearch] = useState("");
     const taxTickers = assets.filter(a => a.account_type === "Taxable").map(a => a.ticker);
     const taxInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Taxable"), [transactions, assets]);
     const taxPL = taxable.total - taxInvested;
@@ -1458,11 +1494,23 @@ export default function WhaleOS() {
     const donutData = useMemo(() => displayRows.filter(r => r.value > 0), [displayRows]);
     const viewLabel = taxView === "core" ? "Core ETFs (Strategy)" : "Global Taxable (All)";
 
-    // ── Recent Taxable transactions for log display ──────────
-    const taxTxnLog = useMemo(() => {
-      const tickers = new Set(taxTickers);
-      return transactions.filter(t => tickers.has(t.ticker)).slice().reverse().slice(0, 15);
-    }, [transactions, taxTickers]);
+  const groupedTaxTxns = useMemo(() => {
+    const groups = {};
+    const tickers = new Set(taxTickers);
+    // Lọc theo ticker HOẶC theo loại giao dịch (Buy/Sell) dựa trên ô Search
+    const filtered = transactions.filter(t => 
+      tickers.has(t.ticker) && 
+      (t.ticker.toLowerCase().includes(taxSearch.toLowerCase()) || 
+        t.type.toLowerCase().includes(taxSearch.toLowerCase()))
+    );
+  
+    filtered.forEach(t => {
+      const monthYear = t.date.substring(0, 7);
+      if (!groups[monthYear]) groups[monthYear] = [];
+      groups[monthYear].push(t);
+    });
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [transactions, taxTickers, taxSearch]);
 
     useEffect(() => { if (taxTickers.length && !txnForm.ticker) setTxnForm(f => ({ ...f, ticker: taxTickers[0] })); }, [taxTickers]);
     useEffect(() => { if (taxTickers.length && !divForm.ticker) setDivForm(f => ({ ...f, ticker: taxTickers[0] })); }, [taxTickers]);
@@ -1547,22 +1595,57 @@ export default function WhaleOS() {
               <PortfolioTable rows={displayRows} accentColor={C.purple} showTarget={true} />
 
               {/* ── Monthly Investment Summary ───────────── */}
-              {taxTxnLog.length > 0 && (
+              {/* --- Thay thế từ dòng 1564 đến 1579 --- */}
+              {groupedTaxTxns.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Recent Taxable Transactions</div>
-                  {taxTxnLog.map(t => (
-                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 10px", marginBottom: 3, fontSize: 11, gap: 6 }}>
-                      <span style={{ color: C.textDim, minWidth: 62 }}>{t.date}</span>
-                      <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
-                      <span style={{ fontWeight: 700, color: C.purple, minWidth: 36 }}>{t.ticker}</span>
-                      <span style={{ color: C.textMid, fontFamily: "'IBM Plex Mono', monospace", flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
-                      <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace", minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
-                      <button onClick={() => deleteTransaction(t.id)} title="Delete" style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 13, padding: "0 2px", opacity: 0.6, lineHeight: 1 }}>🗑</button>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+                    {/* Thanh Search mới */}
+                    <div style={{ marginBottom: 12 }}>
+                      <input 
+                        value={taxSearch} 
+                        onChange={e => setTaxSearch(e.target.value)} 
+                        placeholder="🔍 Search ticker or type (Buy/Sell/DRIP)..."
+                        style={{ width: "100%", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", fontFamily: "'IBM Plex Mono', monospace" }}
+                      />
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    History by Month
+                  </div>
+                  {groupedTaxTxns.map(([monthYear, txns]) => (
+                    <div key={monthYear} style={{ marginBottom: 16 }}>
+                    {/* Header Tháng/Năm */}
+                    <div style={{ 
+                      background: C.cardAlt, 
+                      padding: "4px 12px", 
+                      borderRadius: "6px 6px 0 0", 
+                      fontSize: 10, 
+                      fontWeight: 800, 
+                      color: C.purple, 
+                      borderLeft: `3px solid ${C.purple}`,
+                      display: "flex",
+                      justifyContent: "space-between"
+                    }}>
+                      <span>📅 {monthYear}</span>
+                      <span>{txns.length} TXNS</span>
+                    </div>
+        
+                    {/* Danh sách giao dịch */}
+                    <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
+                      {txns.sort((a, b) => b.date.localeCompare(a.date)).map(t => (
+                        <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                          <span style={{ color: C.textDim, minWidth: 20 }}>{t.date.split('-')[2]}</span>
+                          <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
+                          <span style={{ fontWeight: 700, color: C.purple, minWidth: 36 }}>{t.ticker}</span>
+                          <span style={{ color: C.textMid, fontFamily: "'IBM Plex Mono', monospace", flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
+                          <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace", minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
+                          <button onClick={() => deleteTransaction(t.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6 }}>🗑</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
             {/* ── Transaction Logger ─────────────────────── */}
             <div style={{ flex: "1 1 240px", minWidth: 220 }}>
@@ -1587,7 +1670,7 @@ export default function WhaleOS() {
             </div>
           </div>
         )}
-
+        
         {tab === "sbloc" && (
           <Section title="SBLOC Health Monitor">
             <Grid cols={3} gap={10}>
