@@ -2197,7 +2197,7 @@ export default function WhaleOS() {
       `}</style>
 
       {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 100, background: C.bg + "E8", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <header style={{ position: "sticky", top: 0, zIndex: 100, background: C.bg + "E8", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 28 }}>🐋</span>
           <div>
