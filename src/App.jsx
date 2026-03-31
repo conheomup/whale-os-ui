@@ -506,45 +506,53 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
-  const renderCustomizedLabel = (props) => {
-    const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
-    if (percent < 0.03) return null;
-    const RADIAN = Math.PI / 180;
-    const sin = Math.sin(-RADIAN * midAngle);
-    const cos = Math.cos(-RADIAN * midAngle);
-    const sx = cx + (outerRadius + 5) * cos;
-    const sy = cy + (outerRadius + 5) * sin;
-    const mx = cx + (outerRadius + 20) * cos;
-    const my = cy + (outerRadius + 20) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * 22;
-    const ey = my;
-    const textAnchor = cos >= 0 ? 'start' : 'end';
-    const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
-    return (
-      <g>
-        <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
-        <circle cx={ex} cy={ey} r={2.5} fill={color} />
-        <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} textAnchor={textAnchor} fill={C.text} fontSize={11} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
-          {`${payload.ticker} (${(percent * 100).toFixed(0)}%)`}
-        </text>
-      </g>
-    );
-  };
+  
   return (
-    <div style={{ position: "relative", width: "100%" }}>
-      <ResponsiveContainer width="100%" height={320}>
+    <div style={{ position: "relative", width: "100%", height: 250, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           {hasData ? (
-            <Pie data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" paddingAngle={3} strokeWidth={0} label={renderCustomizedLabel} labelLine={false}>
-              {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
+            <Pie 
+              data={data} 
+              dataKey="value" 
+              nameKey="ticker" 
+              cx="50%" cy="50%" 
+              innerRadius="65%" // Làm vòng mỏng hơn để rộng tâm
+              outerRadius="90%" 
+              paddingAngle={2} 
+              strokeWidth={0}
+            >
+              {data.map((_, i) => (
+                <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />
+              ))}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}><Cell fill={C.border} /></Pie>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="65%" outerRadius="90%" strokeWidth={0}>
+              <Cell fill={C.border} />
+            </Pie>
           )}
         </PieChart>
       </ResponsiveContainer>
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+      
+      {/* TÂM VÒNG TRÒN: Đảm bảo luôn nằm chính giữa và không đè số */}
+      <div style={{ 
+        position: "absolute", 
+        textAlign: "center", 
+        pointerEvents: "none",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center"
+      }}>
+        <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>TOTAL NAV</div>
+        <div style={{ 
+          fontSize: 22, 
+          fontWeight: 800, 
+          color: C.text, 
+          fontFamily: "'IBM Plex Mono', monospace",
+          lineHeight: 1
+        }}>
           {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
       </div>
@@ -2237,7 +2245,15 @@ export default function WhaleOS() {
       `}</style>
 
       {/* HEADER */}
-      <header style={{ position: "sticky", top: 0, zIndex: 100, background: C.bg + "E8", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+        <header style={{ 
+          position: "sticky", top: 0, zIndex: 100, 
+          background: C.bg + "E8", backdropFilter: "blur(12px)", 
+          borderBottom: `1px solid ${C.border}`, 
+          // Thêm padding-left/right để tránh viền iPhone
+          padding: "10px max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left))", 
+          display: "flex", alignItems: "center", justifyContent: "space-between", 
+          width: "100%" 
+        }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 28 }}>🐋</span>
           <div>
@@ -2272,7 +2288,12 @@ export default function WhaleOS() {
       )}
 
       {/* MAIN CONTENT */}
-      <main style={{ padding: "16px 16px 90px 16px", maxWidth: 1800, margin: "0 auto" }}>
+      <main style={{ 
+        // Padding đáy 90px để tránh đè Bottom Nav, padding 2 bên tự dãn theo Safe Area của iPhone
+        padding: "16px max(16px, env(safe-area-inset-right)) 120px max(16px, env(safe-area-inset-left))", 
+        maxWidth: 1800, 
+        margin: "0 auto" 
+      }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, color: C.text }}>
           {NAV_ITEMS.find(n => n.id === page)?.icon} {NAV_ITEMS.find(n => n.id === page)?.label}
         </h2>
