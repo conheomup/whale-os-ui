@@ -2232,7 +2232,7 @@ export default function WhaleOS() {
       )}
 
       {/* MAIN CONTENT */}
-      <main style={{ padding: "16px 16px 90px 16px", maxWidth: 1100, margin: "0 auto" }}>
+      <main style={{ padding: "16px 16px 90px 16px", maxWidth: 1600, margin: "0 auto" }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, color: C.text }}>
           {NAV_ITEMS.find(n => n.id === page)?.icon} {NAV_ITEMS.find(n => n.id === page)?.label}
         </h2>
