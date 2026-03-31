@@ -507,29 +507,41 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
   
-  const renderCustomizedLabel = (props) => {
+  const renderLabels = (props) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
-    if (percent < 0.05) return null; // Chỉ hiện nhãn cho các mã chiếm > 5% để tránh rối mắt
+    
+    // 1. Nhãn % nằm TRONG mã donut
+    const innerLabelRadius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const ix = cx + innerLabelRadius * Math.cos(-midAngle * Math.PI / 180);
+    const iy = cy + innerLabelRadius * Math.sin(-midAngle * Math.PI / 180);
+
+    // 2. Nhãn Ticker nằm NGOÀI (đường kẻ ngắn)
+    if (percent < 0.05) return (
+      <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight="bold">
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
 
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-RADIAN * midAngle);
     const cos = Math.cos(-RADIAN * midAngle);
-    
-    // Thu ngắn các khoảng cách đường kẻ (sx, mx, ex) để tối ưu cho mobile
     const sx = cx + (outerRadius + 2) * cos;
     const sy = cy + (outerRadius + 2) * sin;
     const mx = cx + (outerRadius + 10) * cos;
     const my = cy + (outerRadius + 10) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * 12; // Đường ngang ngắn hơn (12 thay vì 22)
+    const ex = mx + (cos >= 0 ? 1 : -1) * 10;
     const ey = my;
-    const textAnchor = cos >= 0 ? 'start' : 'end';
     const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
 
     return (
       <g>
+        {/* % Inside */}
+        <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight="bold">
+          {`${(percent * 100).toFixed(0)}%`}
+        </text>
+        {/* Ticker Outside */}
         <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
-        <circle cx={ex} cy={ey} r={2} fill={color} />
-        <text x={ex + (cos >= 0 ? 1 : -1) * 4} y={ey} dy={4} textAnchor={textAnchor} fill={C.text} fontSize={10} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
+        <text x={ex + (cos >= 0 ? 1 : -1) * 4} y={ey} dy={4} textAnchor={cos >= 0 ? 'start' : 'end'} fill={C.text} fontSize={10} fontWeight="700">
           {payload.ticker}
         </text>
       </g>
@@ -543,24 +555,24 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
           {hasData ? (
             <Pie 
               data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" 
-              innerRadius="72%"  // Tăng lên 72% để vòng tròn mỏng hơn, không đè số ở giữa
-              outerRadius="88%" 
-              paddingAngle={3} strokeWidth={0}
-              label={renderCustomizedLabel} labelLine={false}
+              innerRadius="70%" outerRadius="88%" paddingAngle={3} strokeWidth={0}
+              label={renderLabels} labelLine={false}
             >
               {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="72%" outerRadius="88%" strokeWidth={0}>
-              <Cell fill={C.border} />
-            </Pie>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="70%" outerRadius="88%" strokeWidth={0}><Cell fill={C.border} /></Pie>
           )}
+          <Tooltip 
+            formatter={(val, name, props) => [`$${fmt(val, 0)} (${props.payload.weight.toFixed(1)}%)`, name]}
+            contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} 
+          />
         </PieChart>
       </ResponsiveContainer>
       <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none", width: "100%" }}>
-        <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.1em" }}>TOTAL NAV</div>
+        <div style={{ fontSize: 8, color: C.textDim, textTransform: "uppercase" }}>TOTAL NAV</div>
         <div style={{ fontSize: 20, fontWeight: 800, color: accentColor, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1 }}>
-          {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
+          ${fmt(totalValue, 0)}
         </div>
       </div>
     </div>
@@ -1167,16 +1179,43 @@ export default function WhaleOS() {
       <Section title="🌐 Global Asset Allocation">
         {allHoldings.length > 0 ? (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 200px", minWidth: 180 }}>
-              <ResponsiveContainer width="100%" height={240}>
+            <div style={{ flex: "1 1 220px", minWidth: 200, position: 'relative', height: 280 }}>
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={allHoldings} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="55%" outerRadius="85%" paddingAngle={2} strokeWidth={0}>
+                  <Pie 
+                    data={allHoldings} 
+                    dataKey="value" 
+                    nameKey="ticker" 
+                    cx="50%" cy="50%" 
+                    innerRadius="68%" 
+                    outerRadius="88%" 
+                    paddingAngle={2} 
+                    strokeWidth={0}
+                    label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+                      const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+                      const x = cx + radius * Math.cos(-midAngle * Math.PI / 180);
+                      const y = cy + radius * Math.sin(-midAngle * Math.PI / 180);
+                      return (
+                        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight="bold">
+                          {`${(percent * 100).toFixed(0)}%`}
+                        </text>
+                      );
+                    }}
+                    labelLine={false}
+                  >
                     {allHoldings.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
                   </Pie>
-                  <Tooltip formatter={(v) => `$${fmt(v)}`} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+                  <Tooltip 
+                    formatter={(val, name, props) => [`$${fmt(val, 0)} (${props.payload.weight.toFixed(1)}%)`, name]}
+                    contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} 
+                  />
                 </PieChart>
               </ResponsiveContainer>
-              <div style={{ textAlign: "center", marginTop: -40, fontSize: 20, fontWeight: 700, color: C.cyan, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalNAV, 0)}</div>
+  
+              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
+                <div style={{ fontSize: 8, color: C.textDim, textTransform: "uppercase", fontWeight: 700 }}>TOTAL NAV</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: C.cyan, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalNAV, 0)}</div>
+              </div>
             </div>
             <div style={{ flex: "2 1 300px", minWidth: 260, overflow: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
