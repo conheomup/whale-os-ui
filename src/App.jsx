@@ -805,7 +805,7 @@ export default function WhaleOS() {
 
     let online = false;
     try {
-      const h = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4000) });
+      const h = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(60000) });
       if (h.ok) online = true;
     } catch { /* offline */ }
     setApiOnline(online);
