@@ -15,13 +15,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 //  STORAGE LAYER — Supabase-backed
 // ═══════════════════════════════════════════════════════════════
 const DB = {
-  _cloudStatus: "disconnected", // "connected" | "disconnected" | "syncing"
+  _cloudStatus: "disconnected",
   _listeners: new Set(),
 
   onStatusChange(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); },
   _setStatus(s) { this._cloudStatus = s; this._listeners.forEach(fn => fn(s)); },
 
-  // ── Generic helpers ──────────────────────────────────────────
   async get(table) {
     try {
       this._setStatus("syncing");
@@ -42,7 +41,6 @@ const DB = {
     }
   },
 
-  // --- Thay thế hàm set cũ (Dòng 53 - 85) ---
   async set(table, payload) {
     try {
       this._setStatus("syncing");
@@ -54,12 +52,10 @@ const DB = {
       }
 
       if (Array.isArray(payload)) {
-        // Cải tiến: Xóa sạch dữ liệu cũ với điều kiện chắc chắn
         const { error: delErr } = await supabase.from(table).delete().neq("id", -999);
         if (delErr) console.warn(`[DB.set] Delete warning:`, delErr.message);
 
         if (payload.length > 0) {
-          // Bỏ ID cũ để Supabase tự cấp ID mới, tránh xung đột khóa chính
           const rows = payload.map((row, idx) => {
             const { id, ...data } = row;
             return { ...data, id: idx + 1 };
@@ -82,7 +78,6 @@ const DB = {
     }
   },
 
-  // ── Prices & cache stored in settings JSON columns ──────────
   async getPrices() {
     try {
       const { data } = await supabase.from("settings").select("prices_json").eq("id", 1).single();
@@ -112,12 +107,9 @@ const DB = {
     } catch { return false; }
   },
 
-  // ── Initialization & seeding ─────────────────────────────────
   async init() {
     try {
       this._setStatus("syncing");
-
-      // Check if settings row exists
       const { data: settingsRow } = await supabase.from("settings").select("id").eq("id", 1).single();
       if (!settingsRow) {
         await supabase.from("settings").insert({
@@ -133,8 +125,6 @@ const DB = {
           cache_json: {},
         });
       }
-
-      // Seed assets if empty
       const { data: existingAssets } = await supabase.from("assets").select("id").limit(1);
       if (!existingAssets || existingAssets.length === 0) {
         await supabase.from("assets").insert([
@@ -145,8 +135,6 @@ const DB = {
           { id: 5, ticker: "JEPI", account_type: "Roth", target_weight: 30 },
         ]);
       }
-
-      // Other tables don't need seeding — they start empty
       this._setStatus("connected");
       console.log("[DB] Supabase initialized successfully");
     } catch (err) {
@@ -155,15 +143,11 @@ const DB = {
     }
   },
 
-  // ── One-time migration from window.storage (old artifact storage) ──
   async migrateFromLocalStorage() {
     try {
       const migrated = await this.getCache("__migrated_from_localstorage");
-      if (migrated) return; // Already migrated
-
+      if (migrated) return;
       console.log("[DB] Checking for old window.storage data to migrate...");
-
-      // Try reading from the old window.storage API
       let oldSettings, oldIncome, oldAssets, oldTransactions, oldSbloc, oldDividends, oldActions, oldPrices;
       try {
         const _get = async (k) => {
@@ -183,137 +167,79 @@ const DB = {
         await this.setCache("__migrated_from_localstorage", true);
         return;
       }
-
       const hasOldData = oldSettings || (oldIncome && oldIncome.length) || (oldAssets && oldAssets.length) ||
         (oldTransactions && oldTransactions.length) || (oldSbloc && oldSbloc.length) ||
         (oldDividends && oldDividends.length) || (oldActions && oldActions.length);
-
       if (!hasOldData) {
         console.log("[DB] No old data found to migrate.");
         await this.setCache("__migrated_from_localstorage", true);
         return;
       }
-
-      console.log("[DB] 🔄 Migrating old data to Supabase...");
-
-      // Migrate settings
+      console.log("[DB] Migrating old data to Supabase...");
       if (oldSettings) {
         const merged = {
-          id: 1,
-          target_nav: oldSettings.target_nav ?? 200000,
-          monthly_expenses: oldSettings.monthly_expenses ?? 1500,
-          expected_annual_return: oldSettings.expected_annual_return ?? 0.10,
-          fed_next_meeting: oldSettings.fed_next_meeting ?? "2026-06-18",
-          fed_prob_hold: oldSettings.fed_prob_hold ?? 62,
-          fed_prob_cut: oldSettings.fed_prob_cut ?? 33,
-          fed_prob_hike: oldSettings.fed_prob_hike ?? 5,
-          prices_json: oldPrices || {},
-          cache_json: {},
+          id: 1, target_nav: oldSettings.target_nav ?? 200000, monthly_expenses: oldSettings.monthly_expenses ?? 1500,
+          expected_annual_return: oldSettings.expected_annual_return ?? 0.10, fed_next_meeting: oldSettings.fed_next_meeting ?? "2026-06-18",
+          fed_prob_hold: oldSettings.fed_prob_hold ?? 62, fed_prob_cut: oldSettings.fed_prob_cut ?? 33, fed_prob_hike: oldSettings.fed_prob_hike ?? 5,
+          prices_json: oldPrices || {}, cache_json: {},
         };
         await supabase.from("settings").upsert(merged, { onConflict: "id" });
-        console.log("[DB] ✅ Settings migrated");
       }
-
-      // Migrate incomes
       if (oldIncome && oldIncome.length > 0) {
         const { data: existing } = await supabase.from("incomes").select("id").limit(1);
         if (!existing || existing.length === 0) {
           const rows = oldIncome.map((r, i) => ({
-            id: i + 1,
-            month_year: r.month_year,
-            va: parseFloat(r.va) || 0,
-            w2_gross: parseFloat(r.w2_gross) || 0,
-            w2_net: parseFloat(r.w2_net) || 0,
-            mha: parseFloat(r.mha) || 0,
-            pell: parseFloat(r.pell) || 0,
-            income_1099: parseFloat(r.income_1099) || 0,
-            other_income: parseFloat(r.other_income) || 0,
+            id: i + 1, month_year: r.month_year, va: parseFloat(r.va) || 0, w2_gross: parseFloat(r.w2_gross) || 0,
+            w2_net: parseFloat(r.w2_net) || 0, mha: parseFloat(r.mha) || 0, pell: parseFloat(r.pell) || 0,
+            income_1099: parseFloat(r.income_1099) || 0, other_income: parseFloat(r.other_income) || 0,
           }));
           await supabase.from("incomes").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} income records migrated`);
         }
       }
-
-      // Migrate assets
       if (oldAssets && oldAssets.length > 0) {
         const { data: existing } = await supabase.from("assets").select("id").limit(1);
         if (!existing || existing.length === 0) {
-          const rows = oldAssets.map((r, i) => ({
-            id: i + 1,
-            ticker: r.ticker,
-            account_type: r.account_type,
-            target_weight: r.target_weight,
-          }));
+          const rows = oldAssets.map((r, i) => ({ id: i + 1, ticker: r.ticker, account_type: r.account_type, target_weight: r.target_weight }));
           await supabase.from("assets").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} assets migrated`);
         }
       }
-
-      // Migrate transactions
       if (oldTransactions && oldTransactions.length > 0) {
         const { data: existing } = await supabase.from("transactions").select("id").limit(1);
         if (!existing || existing.length === 0) {
           const rows = oldTransactions.map((r, i) => ({
-            id: r.id || Date.now() + i,
-            date: r.date,
-            ticker: r.ticker,
-            type: r.type,
-            shares: parseFloat(r.shares) || 0,
-            price: parseFloat(r.price) || 0,
-            total_amount: parseFloat(r.total_amount) || 0,
+            id: r.id || Date.now() + i, date: r.date, ticker: r.ticker, type: r.type,
+            shares: parseFloat(r.shares) || 0, price: parseFloat(r.price) || 0, total_amount: parseFloat(r.total_amount) || 0,
           }));
           await supabase.from("transactions").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} transactions migrated`);
         }
       }
-
-      // Migrate SBLOC
       if (oldSbloc && oldSbloc.length > 0) {
         const { data: existing } = await supabase.from("sbloc").select("id").limit(1);
         if (!existing || existing.length === 0) {
-          const rows = oldSbloc.map((r, i) => ({
-            id: r.id || i + 1,
-            date: r.date,
-            amount: parseFloat(r.amount) || 0,
-          }));
+          const rows = oldSbloc.map((r, i) => ({ id: r.id || i + 1, date: r.date, amount: parseFloat(r.amount) || 0 }));
           await supabase.from("sbloc").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} SBLOC records migrated`);
         }
       }
-
-      // Migrate dividends
       if (oldDividends && oldDividends.length > 0) {
         const { data: existing } = await supabase.from("dividends").select("id").limit(1);
         if (!existing || existing.length === 0) {
           const rows = oldDividends.map((r, i) => ({
-            id: r.id || Date.now() + i,
-            date: r.date,
-            ticker: r.ticker,
-            amount: parseFloat(r.amount) || 0,
+            id: r.id || Date.now() + i, date: r.date, ticker: r.ticker, amount: parseFloat(r.amount) || 0,
           }));
           await supabase.from("dividends").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} dividend records migrated`);
         }
       }
-
-      // Migrate actions
       if (oldActions && oldActions.length > 0) {
         const { data: existing } = await supabase.from("actions").select("id").limit(1);
         if (!existing || existing.length === 0) {
           const rows = oldActions.map((r, i) => ({
-            id: r.id || Date.now() + i,
-            month_year: r.month_year,
-            description: r.description,
-            completed: r.completed || false,
+            id: r.id || Date.now() + i, month_year: r.month_year, description: r.description, completed: r.completed || false,
           }));
           await supabase.from("actions").insert(rows);
-          console.log(`[DB] ✅ ${rows.length} action items migrated`);
         }
       }
-
-      // Mark migration complete
       await this.setCache("__migrated_from_localstorage", true);
-      console.log("[DB] 🎉 Migration complete!");
+      console.log("[DB] Migration complete!");
     } catch (err) {
       console.warn("[DB] Migration error:", err);
     }
@@ -385,11 +311,11 @@ const Quant = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  THEME & CONSTANTS
+//  THEME & CONSTANTS — TRUE BLACK OLED
 // ═══════════════════════════════════════════════════════════════
 const C = {
-  bg: "#060A13", card: "#0C1222", cardAlt: "#111B2E", border: "#1B2B44",
-  borderLight: "#243352", cyan: "#00D4FF", cyanDim: "#0891b2",
+  bg: "#000000", card: "#080E1A", cardAlt: "#0D1525", border: "#141E30",
+  borderLight: "#1C2B42", cyan: "#00D4FF", cyanDim: "#0891b2",
   purple: "#8B5CF6", purpleDim: "#6D28D9", amber: "#F59E0B",
   red: "#EF4444", green: "#22C55E", greenDim: "#16A34A",
   text: "#E2E8F0", textDim: "#64748B", textMid: "#94A3B8",
@@ -443,10 +369,8 @@ function SvgGauge({ value, max = 50, label, subLabel, thresholds }) {
   const totalSweep = 270;
   const cx = 100, cy = 100, r = 72;
   const zones = thresholds || [
-    { from: 0, to: 0.3, color: C.green },
-    { from: 0.3, to: 0.5, color: "#84CC16" },
-    { from: 0.5, to: 0.7, color: C.amber },
-    { from: 0.7, to: 1.0, color: C.red },
+    { from: 0, to: 0.3, color: C.green }, { from: 0.3, to: 0.5, color: "#84CC16" },
+    { from: 0.5, to: 0.7, color: C.amber }, { from: 0.7, to: 1.0, color: C.red },
   ];
   const toRad = (deg) => deg * Math.PI / 180;
   const arcPoint = (angleDeg) => ({
@@ -562,16 +486,12 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
-
-  // Hàm vẽ nhãn và đường dẫn (callout lines) ra bên ngoài
   const renderCustomizedLabel = (props) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
-    if (percent < 0.03) return null; // Không hiện mã quá nhỏ để tránh đè nhau
-
+    if (percent < 0.03) return null;
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-RADIAN * midAngle);
     const cos = Math.cos(-RADIAN * midAngle);
-    
     const sx = cx + (outerRadius + 5) * cos;
     const sy = cy + (outerRadius + 5) * sin;
     const mx = cx + (outerRadius + 20) * cos;
@@ -579,9 +499,7 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
     const ex = mx + (cos >= 0 ? 1 : -1) * 22;
     const ey = my;
     const textAnchor = cos >= 0 ? 'start' : 'end';
-
     const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
-
     return (
       <g>
         <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
@@ -592,24 +510,16 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
       </g>
     );
   };
-
   return (
     <div style={{ position: "relative", width: "100%" }}>
       <ResponsiveContainer width="100%" height={320}>
         <PieChart>
           {hasData ? (
-            <Pie
-              data={data} dataKey="value" nameKey="ticker"
-              cx="50%" cy="50%" innerRadius="40%" outerRadius="70%"
-              paddingAngle={3} strokeWidth={0}
-              label={renderCustomizedLabel} labelLine={false}
-            >
+            <Pie data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" paddingAngle={3} strokeWidth={0} label={renderCustomizedLabel} labelLine={false}>
               {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}>
-              <Cell fill={C.border} />
-            </Pie>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}><Cell fill={C.border} /></Pie>
           )}
         </PieChart>
       </ResponsiveContainer>
@@ -623,11 +533,9 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
 }
 
 function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
-  // Thêm "Action" vào danh sách tiêu đề nếu showTarget = true
-  const headers = showTarget 
-    ? ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%", "Tgt%", "Action"] 
+  const headers = showTarget
+    ? ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%", "Tgt%", "Action"]
     : ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%"];
-
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -648,7 +556,6 @@ function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
               <td style={{ textAlign: "right", padding: "8px 4px", color: r.pl >= 0 ? C.green : C.red }}>{r.pl >= 0 ? "+" : ""}${fmt(r.pl, 0)}</td>
               <td style={{ textAlign: "right", padding: "8px 4px", color: C.textMid }}>{r.weight.toFixed(1)}%</td>
               {showTarget && <td style={{ textAlign: "right", padding: "8px 4px", color: C.amber }}>{r.targetWeight}%</td>}
-              {/* --- CỘT ACTION: TỰ TÍNH TOÁN REBALANCE --- */}
               {showTarget && (
                 <td style={{ textAlign: "right", padding: "8px 4px", fontWeight: 700, color: (r.rebalance || 0) >= 0 ? C.green : C.red }}>
                   {(r.rebalance || 0) >= 0 ? `+${fmt(r.rebalance, 0)}` : `${fmt(r.rebalance, 0)}`}
@@ -679,6 +586,111 @@ const CustomTooltip = ({ active, payload, label, prefix = "$" }) => {
     </div>
   );
 };
+
+// ═══════════════════════════════════════════════════════════════
+//  COLLAPSIBLE MONTH GROUP COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function CollapsibleMonthGroup({ monthYear, txns, accentColor, isExpanded, onToggle, onDelete }) {
+  // Monthly metrics: net total and ticker breakdown
+  const { netTotal, tickerBreakdown, buyTotal, sellTotal } = useMemo(() => {
+    let buy = 0, sell = 0;
+    const byTicker = {};
+    txns.forEach(t => {
+      const amt = parseFloat(t.total_amount) || 0;
+      if (t.type === "Sell") {
+        sell += amt;
+      } else {
+        buy += amt;
+      }
+      if (!byTicker[t.ticker]) byTicker[t.ticker] = 0;
+      byTicker[t.ticker] += (t.type === "Sell" ? -amt : amt);
+    });
+    return { netTotal: buy - sell, tickerBreakdown: byTicker, buyTotal: buy, sellTotal: sell };
+  }, [txns]);
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {/* Header — clickable to expand/collapse */}
+      <div
+        onClick={onToggle}
+        style={{
+          background: `${accentColor}10`, padding: "8px 12px", borderRadius: isExpanded ? "8px 8px 0 0" : 8,
+          fontSize: 11, fontWeight: 800, color: accentColor, borderLeft: `3px solid ${accentColor}`,
+          display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
+          transition: "all 0.2s", userSelect: "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▶</span>
+          <span>📅 {monthYear}</span>
+          <span style={{ fontSize: 9, color: C.textDim, fontWeight: 600 }}>{txns.length} TXN{txns.length !== 1 ? "S" : ""}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 10, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(buyTotal, 0)}</span>
+          {sellTotal > 0 && <span style={{ fontSize: 10, color: C.red, fontFamily: "'IBM Plex Mono', monospace" }}>-${fmt(sellTotal, 0)}</span>}
+          <span style={{
+            fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+            color: netTotal >= 0 ? C.green : C.red,
+            background: netTotal >= 0 ? `${C.green}15` : `${C.red}15`,
+            padding: "2px 8px", borderRadius: 6,
+          }}>
+            NET {netTotal >= 0 ? "+" : ""}${fmt(netTotal, 0)}
+          </span>
+        </div>
+      </div>
+
+      {/* Expandable body */}
+      {isExpanded && (
+        <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", overflow: "hidden" }}>
+          {/* Ticker breakdown sub-summary */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "6px 10px", background: `${C.cardAlt}`, borderBottom: `1px solid ${C.border}40` }}>
+            {Object.entries(tickerBreakdown).map(([ticker, amt]) => (
+              <span key={ticker} style={{
+                fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                padding: "2px 8px", borderRadius: 4,
+                background: amt >= 0 ? `${C.green}10` : `${C.red}10`,
+                color: amt >= 0 ? C.green : C.red,
+                border: `1px solid ${amt >= 0 ? C.green : C.red}20`,
+              }}>
+                {ticker}: {amt >= 0 ? "+" : ""}${fmt(amt, 0)}
+              </span>
+            ))}
+          </div>
+
+          {/* Transaction rows */}
+          <div style={{ padding: 4 }}>
+            {[...txns].sort((a, b) => b.date.localeCompare(a.date)).map(t => (
+              <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                <span style={{ color: C.textDim, minWidth: 20 }}>{t.date.split('-')[2]}</span>
+                <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
+                <span style={{ fontWeight: 700, color: accentColor, minWidth: 36 }}>{t.ticker}</span>
+                <span style={{ color: C.textMid, fontFamily: "'IBM Plex Mono', monospace", flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
+                <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace", minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
+                <button onClick={(e) => { e.stopPropagation(); onDelete(t.id); }} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SCROLLABLE HISTORY SECTION
+// ═══════════════════════════════════════════════════════════════
+function ScrollableHistory({ children, maxHeight = 520 }) {
+  return (
+    <div style={{
+      maxHeight, overflowY: "auto", overflowX: "hidden",
+      paddingRight: 4,
+      scrollbarWidth: "thin",
+      scrollbarColor: `${C.border} transparent`,
+    }}>
+      {children}
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  MARKET HEATMAP DATA (static demonstration)
@@ -811,11 +823,9 @@ export default function WhaleOS() {
     }
     setLastFetch(new Date().toLocaleTimeString());
 
-    // VIX
     try {
       const r = await fetch(`${API_BASE}/vix`);
       const d = await r.json();
-      console.log("[WhaleOS] VIX response:", d);
       if (d && !d.error && d.current) {
         const vd = { current: d.current, day: d.day ?? d.current, week: d.week ?? d.last_week ?? d.current, month: d.month ?? d.current, midTerm: d.midTerm ?? d.mid_term ?? d.current };
         setVixData(vd);
@@ -823,11 +833,9 @@ export default function WhaleOS() {
       }
     } catch (err) { console.warn("[WhaleOS] VIX fetch failed:", err); }
 
-    // Fed Rate
     try {
       const r = await fetch(`${API_BASE}/fed-rate`);
       const d = await r.json();
-      console.log("[WhaleOS] Fed Rate response:", d);
       if (d && d.current !== undefined) {
         const fd = { current: d.current, prev: d.prev ?? d.current, nextMeeting: d.nextMeeting ?? "—", probHold: d.probHold ?? 0, probCut: d.probCut ?? 0, probHike: d.probHike ?? 0, source: d.source ?? "API" };
         setFedRate(fd);
@@ -835,14 +843,11 @@ export default function WhaleOS() {
       }
     } catch (err) { console.warn("[WhaleOS] Fed rate fetch failed:", err); }
 
-    // Prices — the critical path
     if (uniqueTickers.length > 0) {
       const url = `${API_BASE}/prices?tickers=${uniqueTickers.join(",")}`;
-      console.log("[WhaleOS] Fetching prices:", url);
       try {
         const r = await fetch(url);
         const d = await r.json();
-        console.log("[WhaleOS] Prices response:", d);
         const validPrices = {};
         if (d && typeof d === "object") {
           for (const [ticker, price] of Object.entries(d)) {
@@ -853,19 +858,13 @@ export default function WhaleOS() {
         if (Object.keys(validPrices).length > 0) {
           setPrices(prev => {
             const merged = { ...prev, ...validPrices };
-            console.log("[WhaleOS] Prices merged into state:", merged);
             DB.setPrices(merged);
             return merged;
           });
-        } else {
-          console.warn("[WhaleOS] No valid prices returned for:", uniqueTickers);
         }
       } catch (err) { console.warn("[WhaleOS] Price fetch failed:", err); }
-    } else {
-      console.log("[WhaleOS] No tickers to fetch prices for");
     }
 
-    // Heatmap
     try {
       const [mag7Res, sectorsRes] = await Promise.all([
         fetch(`${API_BASE}/heatmap/mag7`).then(r => r.json()).catch(() => null),
@@ -882,31 +881,17 @@ export default function WhaleOS() {
   // ── Load all data from Supabase ────────────────────────────
   const loadAll = useCallback(async () => {
     await DB.init();
-
-    // One-time migration from old window.storage
     await DB.migrateFromLocalStorage();
-
-    // Load from Supabase tables
     const [s, i, a, t, sb, d, ac] = await Promise.all([
-      DB.get("settings"),
-      DB.get("incomes"),
-      DB.get("assets"),
-      DB.get("transactions"),
-      DB.get("sbloc"),
-      DB.get("dividends"),
-      DB.get("actions"),
+      DB.get("settings"), DB.get("incomes"), DB.get("assets"),
+      DB.get("transactions"), DB.get("sbloc"), DB.get("dividends"), DB.get("actions"),
     ]);
     const p = await DB.getPrices();
-
     if (s) {
       setSettings({
-        target_nav: s.target_nav ?? 200000,
-        monthly_expenses: s.monthly_expenses ?? 1500,
-        expected_annual_return: s.expected_annual_return ?? 0.10,
-        fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
-        fed_prob_hold: s.fed_prob_hold ?? 62,
-        fed_prob_cut: s.fed_prob_cut ?? 33,
-        fed_prob_hike: s.fed_prob_hike ?? 5,
+        target_nav: s.target_nav ?? 200000, monthly_expenses: s.monthly_expenses ?? 1500,
+        expected_annual_return: s.expected_annual_return ?? 0.10, fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
+        fed_prob_hold: s.fed_prob_hold ?? 62, fed_prob_cut: s.fed_prob_cut ?? 33, fed_prob_hike: s.fed_prob_hike ?? 5,
       });
     }
     if (i) setIncomes(i);
@@ -923,20 +908,17 @@ export default function WhaleOS() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // ── Auto-refresh every 15 minutes ──────────────────────────
   useEffect(() => {
     const allTickers = assets.map(a => a.ticker);
     fetchIntervalRef.current = setInterval(() => { fetchMarketData(allTickers); }, 15 * 60 * 1000);
     return () => clearInterval(fetchIntervalRef.current);
   }, [assets, fetchMarketData]);
 
-  // ── Immediate price fetch when assets change ──────────────
   const prevAssetsRef = useRef(null);
   useEffect(() => {
     if (!ready) return;
     const currentKey = [...assets].map(a => a.ticker).sort().join(",");
     if (prevAssetsRef.current !== null && prevAssetsRef.current !== currentKey) {
-      console.log("[WhaleOS] Assets changed, triggering immediate price fetch");
       fetchMarketData(assets.map(a => a.ticker));
     }
     prevAssetsRef.current = currentKey;
@@ -944,16 +926,9 @@ export default function WhaleOS() {
 
   // ── Save helpers — now write to Supabase ───────────────────
   const save = useCallback(async (key, data) => {
-    // Map old key names to Supabase table names
     const tableMap = {
-      settings: "settings",
-      income: "incomes",
-      assets: "assets",
-      transactions: "transactions",
-      sbloc: "sbloc",
-      dividends: "dividends",
-      actions: "actions",
-      prices: "__prices__",
+      settings: "settings", income: "incomes", assets: "assets", transactions: "transactions",
+      sbloc: "sbloc", dividends: "dividends", actions: "actions", prices: "__prices__",
     };
     const table = tableMap[key];
     if (table === "__prices__") {
@@ -973,6 +948,14 @@ export default function WhaleOS() {
     setTransactions(updated);
     await save("transactions", updated);
     flash("Transaction deleted", "amber");
+  };
+
+  // ── [UPGRADE 3] Delete Dividend ────────────────────────────
+  const deleteDividend = async (divId) => {
+    const updated = dividends.filter(d => d.id !== divId);
+    setDividends(updated);
+    await save("dividends", updated);
+    flash("Dividend deleted", "amber");
   };
 
   // ── Derived calculations ───────────────────────────────────
@@ -1007,6 +990,9 @@ export default function WhaleOS() {
     return arr.map(r => ({ ...r, weight: tot > 0 ? (r.value / tot) * 100 : 0, pl: r.value - r.cost }));
   }, [roth.rows, taxable.rows]);
 
+  // ── [UPGRADE 4] Net Equity ─────────────────────────────────
+  const netEquity = totalNAV - latestDebt;
+
   // ── VIX market summary ─────────────────────────────────────
   const [vlbl, vclr] = vixLabel(vixData.current);
   const marketSummary = useMemo(() => {
@@ -1017,6 +1003,29 @@ export default function WhaleOS() {
     if (v > 15) return "Thị trường trung tính. Tiếp tục DCA theo kế hoạch. Điều kiện tốt để tăng vị thế.";
     return "Thị trường lạc quan. Tiếp tục DCA. Cẩn trọng không FOMO — gắn chặt kế hoạch.";
   }, [vixData.current]);
+
+  // ── [UPGRADE 5] Sync Rebalance to Actions helper ──────────
+  const syncRebalanceToActions = useCallback(async (displayRows, accountLabel) => {
+    const currentMonth = nowYM();
+    const newItems = displayRows
+      .filter(r => r.rebalance && Math.abs(r.rebalance) >= 1)
+      .map(r => ({
+        id: Date.now() + Math.random() * 10000,
+        month_year: currentMonth,
+        description: r.rebalance >= 0
+          ? `Buy $${Math.round(Math.abs(r.rebalance))} ${r.ticker} (${accountLabel})`
+          : `Sell $${Math.round(Math.abs(r.rebalance))} ${r.ticker} (${accountLabel})`,
+        completed: false,
+      }));
+    if (newItems.length === 0) {
+      flash("No rebalance actions needed — portfolio is balanced!", "green");
+      return;
+    }
+    const updated = [...actions, ...newItems];
+    setActions(updated);
+    await save("actions", updated);
+    flash(`✅ ${newItems.length} rebalance actions synced to ${currentMonth}`, "green");
+  }, [actions, save]);
 
   if (!ready) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: C.bg, color: C.cyan, fontFamily: "'DM Sans', sans-serif", fontSize: 18 }}>
@@ -1064,9 +1073,10 @@ export default function WhaleOS() {
         </div>
       </Section>
 
-      {/* NAV Metrics */}
+      {/* NAV Metrics — [UPGRADE 4] Net Equity added */}
       <Section title="📈 Portfolio Overview">
-        <Grid cols={3} gap={10}>
+        <Grid cols={4} gap={10}>
+          <MetricCard label="Net Equity" value={`$${fmt(netEquity)}`} sub={`NAV − Debt`} color={netEquity >= 0 ? "#00FF88" : C.red} large />
           <MetricCard label="Total NAV" value={`$${fmt(totalNAV)}`} color={C.cyan} />
           <MetricCard label="Total Invested" value={`$${fmt(totalInvested)}`} color={C.textMid} />
           <MetricCard label="Total P/L" value={`$${fmt(totalPL)}`} sub={`${totalPL >= 0 ? "+" : ""}${totalPLPct.toFixed(1)}%`} color={totalPL >= 0 ? C.green : C.red} />
@@ -1155,26 +1165,19 @@ export default function WhaleOS() {
     const [tab, setTab] = useState("log");
     const [form, setForm] = useState({ month_year: nowYM(), va: 0, w2_gross: 0, w2_net: 0, mha: 0, pell: 0, income_1099: 0, other_income: 0 });
 
-    // ── Auto-load existing data when month_year changes ──────
     useEffect(() => {
       const existing = incomes.find(i => i.month_year === form.month_year);
       if (existing) {
         setForm({
-          month_year: existing.month_year,
-          va: parseFloat(existing.va) || 0,
-          w2_gross: parseFloat(existing.w2_gross) || 0,
-          w2_net: parseFloat(existing.w2_net) || 0,
-          mha: parseFloat(existing.mha) || 0,
-          pell: parseFloat(existing.pell) || 0,
-          income_1099: parseFloat(existing.income_1099) || 0,
-          other_income: parseFloat(existing.other_income) || 0,
+          month_year: existing.month_year, va: parseFloat(existing.va) || 0, w2_gross: parseFloat(existing.w2_gross) || 0,
+          w2_net: parseFloat(existing.w2_net) || 0, mha: parseFloat(existing.mha) || 0, pell: parseFloat(existing.pell) || 0,
+          income_1099: parseFloat(existing.income_1099) || 0, other_income: parseFloat(existing.other_income) || 0,
         });
       } else {
         setForm(f => f.month_year === form.month_year ? { month_year: form.month_year, va: 0, w2_gross: 0, w2_net: 0, mha: 0, pell: 0, income_1099: 0, other_income: 0 } : f);
       }
     }, [form.month_year, incomes]);
 
-    // ── Preview surplus computed with explicit parseFloat ─────
     const previewSurplus = useMemo(() => {
       const va = parseFloat(form.va) || 0;
       const w2n = parseFloat(form.w2_net) || 0;
@@ -1197,14 +1200,9 @@ export default function WhaleOS() {
 
     const handleSave = async () => {
       const clean = {
-        month_year: form.month_year,
-        va: parseFloat(form.va) || 0,
-        w2_gross: parseFloat(form.w2_gross) || 0,
-        w2_net: parseFloat(form.w2_net) || 0,
-        mha: parseFloat(form.mha) || 0,
-        pell: parseFloat(form.pell) || 0,
-        income_1099: parseFloat(form.income_1099) || 0,
-        other_income: parseFloat(form.other_income) || 0,
+        month_year: form.month_year, va: parseFloat(form.va) || 0, w2_gross: parseFloat(form.w2_gross) || 0,
+        w2_net: parseFloat(form.w2_net) || 0, mha: parseFloat(form.mha) || 0, pell: parseFloat(form.pell) || 0,
+        income_1099: parseFloat(form.income_1099) || 0, other_income: parseFloat(form.other_income) || 0,
       };
       const updated = [...incomes.filter(i => i.month_year !== clean.month_year), clean].sort((a, b) => a.month_year.localeCompare(b.month_year));
       setIncomes(updated);
@@ -1304,21 +1302,18 @@ export default function WhaleOS() {
     const [form, setForm] = useState({ date: nowDate(), ticker: "", type: "Buy", shares: 0, price: 0 });
     const [rothSearch, setRothSearch] = useState("");
     const [rothView, setRothView] = useState("core");
+    const [expandedMonths, setExpandedMonths] = useState(() => new Set([nowYM()]));
     const rothTickers = assets.filter(a => a.account_type === "Roth").map(a => a.ticker);
     const autoTotal = form.shares * form.price;
     const rothInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Roth"), [transactions, assets]);
     const rothPL = roth.total - rothInvested;
 
-    // ── Core / Global filtering with useMemo ────────────────
     const { displayRows, displayTotal } = useMemo(() => {
-      const filtered = rothView === "core"
-        ? roth.rows.filter(r => r.targetWeight > 0)
-        : roth.rows;
+      const filtered = rothView === "core" ? roth.rows.filter(r => r.targetWeight > 0) : roth.rows;
       const total = filtered.reduce((s, r) => s + r.value, 0);
       const withRebalance = total > 0
         ? filtered.map(r => {
             const currentWeight = (r.value / total) * 100;
-            // Công thức: (Tỉ trọng mục tiêu * Tổng NAV) - Giá trị hiện tại
             const targetVal = (r.targetWeight / 100) * total;
             const rebalance = targetVal - r.value;
             return { ...r, weight: currentWeight, rebalance };
@@ -1328,7 +1323,6 @@ export default function WhaleOS() {
     }, [roth.rows, rothView]);
 
     const donutData = useMemo(() => displayRows.filter(r => r.value > 0), [displayRows]);
-    const viewLabel = rothView === "core" ? "Core ETFs (Strategy)" : "Global Roth (All)";
 
     useEffect(() => { if (rothTickers.length && !form.ticker) setForm(f => ({ ...f, ticker: rothTickers[0] })); }, [rothTickers]);
 
@@ -1343,28 +1337,39 @@ export default function WhaleOS() {
       setForm({ ...form, shares: 0, price: 0 });
     };
 
-    // ── Recent Roth transactions for log display ────────────
-  const groupedRothTxns = useMemo(() => {
-    const groups = {};
-    const tickers = new Set(rothTickers);
-    // Lọc theo ticker hoặc loại giao dịch dựa trên ô rothSearch
-    const filtered = transactions.filter(t => 
-      tickers.has(t.ticker) && 
-      (t.ticker.toLowerCase().includes(rothSearch.toLowerCase()) || 
-       t.type.toLowerCase().includes(rothSearch.toLowerCase()))
-    );
-    
-    filtered.forEach(t => {
-      const monthYear = t.date.substring(0, 7);
-      if (!groups[monthYear]) groups[monthYear] = [];
-      groups[monthYear].push(t);
-    });
-    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [transactions, rothTickers, rothSearch]);
+    // ── [UPGRADE 1] Enhanced grouped Roth transactions ──────
+    const groupedRothTxns = useMemo(() => {
+      const groups = {};
+      const tickers = new Set(rothTickers);
+      const filtered = transactions.filter(t =>
+        tickers.has(t.ticker) &&
+        (t.ticker.toLowerCase().includes(rothSearch.toLowerCase()) ||
+          t.type.toLowerCase().includes(rothSearch.toLowerCase()))
+      );
+      filtered.forEach(t => {
+        const monthYear = t.date.substring(0, 7);
+        if (!groups[monthYear]) groups[monthYear] = [];
+        groups[monthYear].push(t);
+      });
+      return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+    }, [transactions, rothTickers, rothSearch]);
+
+    const toggleMonth = (my) => {
+      setExpandedMonths(prev => {
+        const next = new Set(prev);
+        if (next.has(my)) next.delete(my); else next.add(my);
+        return next;
+      });
+    };
+
+    const toggleAll = () => {
+      const allMonths = groupedRothTxns.map(([my]) => my);
+      const allExpanded = allMonths.every(my => expandedMonths.has(my));
+      setExpandedMonths(allExpanded ? new Set() : new Set(allMonths));
+    };
 
     return (
       <>
-        {/* ── Staircase Constraint Section ─────────────────── */}
         <Section title={`${year} Roth Staircase Constraint`}>
           <Grid cols={3} gap={10}>
             <MetricCard label="YTD W-2 Gross" value={`$${fmt(ytdW2)}`} color={C.cyan} />
@@ -1382,7 +1387,6 @@ export default function WhaleOS() {
           </div>
         </Section>
 
-        {/* ── Portfolio + Transaction Logger ───────────────── */}
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           <div style={{ flex: "2 1 300px", minWidth: 260 }}>
             <Section title="Roth Portfolio">
@@ -1392,7 +1396,6 @@ export default function WhaleOS() {
                 <MetricCard label="P/L" value={`$${fmt(rothPL)}`} sub={`${rothPL >= 0 ? "+" : ""}${rothInvested > 0 ? ((rothPL / rothInvested) * 100).toFixed(1) : "0.0"}%`} color={rothPL >= 0 ? C.green : C.red} />
               </Grid>
 
-              {/* ── Core / Global Toggle ──────────────────── */}
               <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <ViewToggle value={rothView} onChange={setRothView} coreLabel="🎯 Core ETFs" globalLabel="🌐 Global Roth" />
                 <span style={{ fontSize: 11, color: C.textDim }}>
@@ -1400,16 +1403,21 @@ export default function WhaleOS() {
                 </span>
               </div>
 
-              {/* ── Donut Chart (always visible) ─────────── */}
               <PortfolioDonut data={donutData} totalValue={displayTotal} accentColor={C.cyan} colorOffset={0} />
-
-              {/* ── Filtered Table ────────────────────────── */}
               <PortfolioTable rows={displayRows} accentColor={C.cyan} showTarget={true} />
+
+              {/* [UPGRADE 5] Sync Rebalance to Actions */}
+              {displayRows.some(r => r.rebalance && Math.abs(r.rebalance) >= 1) && (
+                <div style={{ marginTop: 12 }}>
+                  <Btn onClick={() => syncRebalanceToActions(displayRows, "Roth")} variant="ghost" full>
+                    ⚡ Sync Rebalance to Actions
+                  </Btn>
+                </div>
+              )}
             </Section>
           </div>
 
           <div style={{ flex: "1 1 260px", minWidth: 240 }}>
-            {/* ── Transaction Logger ─────────────────────── */}
             <Section title="Log Roth Transaction">
               <InputField label="Date" type="date" value={form.date} onChange={v => setForm({ ...form, date: v })} />
               {rothTickers.length > 0 ? (
@@ -1430,42 +1438,44 @@ export default function WhaleOS() {
               ) : <div style={{ color: C.textDim, fontSize: 13 }}>Add Roth tickers in Settings first.</div>}
             </Section>
 
-            {/* ── Grouped Roth Transactions with Search ── */}
+            {/* [UPGRADE 1 & 2] Enhanced Collapsible Roth History */}
             <Section title="Roth Investment History">
-              {/* Ô Search cho ROTH */}
               <div style={{ marginBottom: 12 }}>
-                <input 
-                  value={rothSearch} 
-                  onChange={e => setRothSearch(e.target.value)} 
+                <input
+                  value={rothSearch} onChange={e => setRothSearch(e.target.value)}
                   placeholder="🔍 Search Roth ticker or type..."
                   style={{ width: "100%", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", fontFamily: "'IBM Plex Mono', monospace" }}
                 />
               </div>
 
-              {groupedRothTxns.length > 0 ? (
-                groupedRothTxns.map(([monthYear, txns]) => (
-                  <div key={monthYear} style={{ marginBottom: 16 }}>
-                    <div style={{ background: `${C.cyan}15`, padding: "4px 12px", borderRadius: "6px 6px 0 0", fontSize: 10, fontWeight: 800, color: C.cyan, borderLeft: `3px solid ${C.cyan}`, display: "flex", justifyContent: "space-between" }}>
-                      <span>📅 {monthYear}</span>
-                      <span>{txns.length} TXNS</span>
-                    </div>
-                    <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
-                      {[...txns].sort((a, b) => b.date.localeCompare(a.date)).map(t => (
-                        <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
-                          <span style={{ color: C.textDim, minWidth: 20 }}>{t.date.split('-')[2]}</span>
-                          <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
-                          <span style={{ fontWeight: 700, color: C.cyan, minWidth: 36 }}>{t.ticker}</span>
-                          <span style={{ color: C.textMid, flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
-                          <span style={{ fontWeight: 700, color: C.text, minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
-                          <button onClick={() => deleteTransaction(t.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6 }}>🗑</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 20 }}>No Roth transactions found.</div>
+              {groupedRothTxns.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <button onClick={toggleAll} style={{
+                    background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 12px",
+                    color: C.textMid, cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                  }}>
+                    {groupedRothTxns.every(([my]) => expandedMonths.has(my)) ? "▼ Collapse All" : "▶ Expand All"}
+                  </button>
+                </div>
               )}
+
+              <ScrollableHistory maxHeight={480}>
+                {groupedRothTxns.length > 0 ? (
+                  groupedRothTxns.map(([monthYear, txns]) => (
+                    <CollapsibleMonthGroup
+                      key={monthYear}
+                      monthYear={monthYear}
+                      txns={txns}
+                      accentColor={C.cyan}
+                      isExpanded={expandedMonths.has(monthYear)}
+                      onToggle={() => toggleMonth(monthYear)}
+                      onDelete={deleteTransaction}
+                    />
+                  ))
+                ) : (
+                  <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 20 }}>No Roth transactions found.</div>
+                )}
+              </ScrollableHistory>
             </Section>
           </div>
         </div>
@@ -1485,15 +1495,13 @@ export default function WhaleOS() {
     const [actionMonth, setActionMonth] = useState(nowYM());
     const [newAction, setNewAction] = useState("");
     const [taxSearch, setTaxSearch] = useState("");
+    const [expandedMonths, setExpandedMonths] = useState(() => new Set([nowYM()]));
     const taxTickers = assets.filter(a => a.account_type === "Taxable").map(a => a.ticker);
     const taxInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Taxable"), [transactions, assets]);
     const taxPL = taxable.total - taxInvested;
 
-    // ── Core / Global filtering with useMemo ────────────────
     const { displayRows, displayTotal } = useMemo(() => {
-      const filtered = taxView === "core"
-        ? taxable.rows.filter(r => r.targetWeight > 0)
-        : taxable.rows;
+      const filtered = taxView === "core" ? taxable.rows.filter(r => r.targetWeight > 0) : taxable.rows;
       const total = filtered.reduce((s, r) => s + r.value, 0);
       const withRebalance = total > 0
         ? filtered.map(r => {
@@ -1507,25 +1515,48 @@ export default function WhaleOS() {
     }, [taxable.rows, taxView]);
 
     const donutData = useMemo(() => displayRows.filter(r => r.value > 0), [displayRows]);
-    const viewLabel = taxView === "core" ? "Core ETFs (Strategy)" : "Global Taxable (All)";
 
-  const groupedTaxTxns = useMemo(() => {
-    const groups = {};
-    const tickers = new Set(taxTickers);
-    // Lọc theo ticker HOẶC theo loại giao dịch (Buy/Sell) dựa trên ô Search
-    const filtered = transactions.filter(t => 
-      tickers.has(t.ticker) && 
-      (t.ticker.toLowerCase().includes(taxSearch.toLowerCase()) || 
-        t.type.toLowerCase().includes(taxSearch.toLowerCase()))
-    );
-  
-    filtered.forEach(t => {
-      const monthYear = t.date.substring(0, 7);
-      if (!groups[monthYear]) groups[monthYear] = [];
-      groups[monthYear].push(t);
-    });
-    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [transactions, taxTickers, taxSearch]);
+    // ── [UPGRADE 1] Enhanced grouped taxable transactions ───
+    const groupedTaxTxns = useMemo(() => {
+      const groups = {};
+      const tickers = new Set(taxTickers);
+      const filtered = transactions.filter(t =>
+        tickers.has(t.ticker) &&
+        (t.ticker.toLowerCase().includes(taxSearch.toLowerCase()) ||
+          t.type.toLowerCase().includes(taxSearch.toLowerCase()))
+      );
+      filtered.forEach(t => {
+        const monthYear = t.date.substring(0, 7);
+        if (!groups[monthYear]) groups[monthYear] = [];
+        groups[monthYear].push(t);
+      });
+      return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+    }, [transactions, taxTickers, taxSearch]);
+
+    const toggleMonth = (my) => {
+      setExpandedMonths(prev => {
+        const next = new Set(prev);
+        if (next.has(my)) next.delete(my); else next.add(my);
+        return next;
+      });
+    };
+
+    const toggleAll = () => {
+      const allMonths = groupedTaxTxns.map(([my]) => my);
+      const allExpanded = allMonths.every(my => expandedMonths.has(my));
+      setExpandedMonths(allExpanded ? new Set() : new Set(allMonths));
+    };
+
+    // ── [UPGRADE 3] Grouped dividends ────────────────────────
+    const groupedDividends = useMemo(() => {
+      const groups = {};
+      dividends.forEach(d => {
+        const monthYear = d.date.substring(0, 7);
+        if (!groups[monthYear]) groups[monthYear] = [];
+        groups[monthYear].push(d);
+      });
+      return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+    }, [dividends]);
 
     useEffect(() => { if (taxTickers.length && !txnForm.ticker) setTxnForm(f => ({ ...f, ticker: taxTickers[0] })); }, [taxTickers]);
     useEffect(() => { if (taxTickers.length && !divForm.ticker) setDivForm(f => ({ ...f, ticker: taxTickers[0] })); }, [taxTickers]);
@@ -1578,8 +1609,7 @@ export default function WhaleOS() {
     const totalDivs = dividends.reduce((s, d) => s + d.amount, 0);
     const monthActions = actions.filter(a => a.month_year === actionMonth);
 
-    // --- Logic tính toán SBLOC ---
-    const safeLtvLimit = 0.25; // Ngưỡng an toàn 25%
+    const safeLtvLimit = 0.25;
     const maxSafeLoan = taxable.total * safeLtvLimit;
     const remainingSafeCapacity = Math.max(0, maxSafeLoan - latestDebt);
 
@@ -1593,14 +1623,12 @@ export default function WhaleOS() {
         {tab === "portfolio" && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flex: "2 1 300px", minWidth: 260 }}>
-              {/* ── Global Metrics (always show total) ────── */}
               <Grid cols={3} gap={10}>
                 <MetricCard label="Taxable NAV (All)" value={`$${fmt(taxable.total)}`} color={C.purple} />
                 <MetricCard label="Invested" value={`$${fmt(taxInvested)}`} color={C.textMid} />
                 <MetricCard label="P/L" value={`$${fmt(taxPL)}`} sub={`${taxPL >= 0 ? "+" : ""}${taxInvested > 0 ? ((taxPL / taxInvested) * 100).toFixed(1) : "0.0"}%`} color={taxPL >= 0 ? C.green : C.red} />
               </Grid>
 
-              {/* ── Core / Global Toggle ──────────────────── */}
               <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <ViewToggle value={taxView} onChange={setTaxView} coreLabel="🎯 Core ETFs" globalLabel="🌐 Global Taxable" />
                 <span style={{ fontSize: 11, color: C.textDim }}>
@@ -1608,66 +1636,54 @@ export default function WhaleOS() {
                 </span>
               </div>
 
-              {/* ── Donut Chart (always visible) ─────────── */}
               <PortfolioDonut data={donutData} totalValue={displayTotal} accentColor={C.purple} colorOffset={3} />
-
-              {/* ── Filtered Table ────────────────────────── */}
               <PortfolioTable rows={displayRows} accentColor={C.purple} showTarget={true} />
 
-              {/* ── Monthly Investment Summary ───────────── */}
-              {/* --- Thay thế từ dòng 1564 đến 1579 --- */}
+              {/* [UPGRADE 5] Sync Rebalance to Actions */}
+              {displayRows.some(r => r.rebalance && Math.abs(r.rebalance) >= 1) && (
+                <div style={{ marginTop: 12 }}>
+                  <Btn onClick={() => syncRebalanceToActions(displayRows, "Taxable")} variant="ghost" full>
+                    ⚡ Sync Rebalance to Actions
+                  </Btn>
+                </div>
+              )}
+
+              {/* [UPGRADE 1 & 2] Enhanced Collapsible Taxable History */}
               {groupedTaxTxns.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>
-                    {/* Thanh Search mới */}
-                    <div style={{ marginBottom: 12 }}>
-                      <input 
-                        value={taxSearch} 
-                        onChange={e => setTaxSearch(e.target.value)} 
-                        placeholder="🔍 Search ticker or type (Buy/Sell/DRIP)..."
-                        style={{ width: "100%", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", fontFamily: "'IBM Plex Mono', monospace" }}
-                      />
-                    </div>
-                    History by Month
-                  </div>
-                  {groupedTaxTxns.map(([monthYear, txns]) => (
-                    <div key={monthYear} style={{ marginBottom: 16 }}>
-                    {/* Header Tháng/Năm */}
-                    <div style={{ 
-                      background: C.cardAlt, 
-                      padding: "4px 12px", 
-                      borderRadius: "6px 6px 0 0", 
-                      fontSize: 10, 
-                      fontWeight: 800, 
-                      color: C.purple, 
-                      borderLeft: `3px solid ${C.purple}`,
-                      display: "flex",
-                      justifyContent: "space-between"
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>History by Month</div>
+                    <button onClick={toggleAll} style={{
+                      background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 12px",
+                      color: C.textMid, cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
                     }}>
-                      <span>📅 {monthYear}</span>
-                      <span>{txns.length} TXNS</span>
-                    </div>
-        
-                    {/* Danh sách giao dịch */}
-                    <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
-                      {txns.sort((a, b) => b.date.localeCompare(a.date)).map(t => (
-                        <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
-                          <span style={{ color: C.textDim, minWidth: 20 }}>{t.date.split('-')[2]}</span>
-                          <span style={{ fontWeight: 700, color: t.type === "Sell" ? C.red : C.green, minWidth: 28 }}>{t.type}</span>
-                          <span style={{ fontWeight: 700, color: C.purple, minWidth: 36 }}>{t.ticker}</span>
-                          <span style={{ color: C.textMid, fontFamily: "'IBM Plex Mono', monospace", flex: 1, textAlign: "right" }}>{parseFloat(t.shares).toFixed(2)} @ ${fmt(t.price)}</span>
-                          <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace", minWidth: 65, textAlign: "right" }}>${fmt(t.total_amount)}</span>
-                          <button onClick={() => deleteTransaction(t.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6 }}>🗑</button>
-                        </div>
-                      ))}
-                    </div>
+                      {groupedTaxTxns.every(([my]) => expandedMonths.has(my)) ? "▼ Collapse All" : "▶ Expand All"}
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <input
+                      value={taxSearch} onChange={e => setTaxSearch(e.target.value)}
+                      placeholder="🔍 Search ticker or type (Buy/Sell/DRIP)..."
+                      style={{ width: "100%", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", fontFamily: "'IBM Plex Mono', monospace" }}
+                    />
+                  </div>
+                  <ScrollableHistory maxHeight={520}>
+                    {groupedTaxTxns.map(([monthYear, txns]) => (
+                      <CollapsibleMonthGroup
+                        key={monthYear}
+                        monthYear={monthYear}
+                        txns={txns}
+                        accentColor={C.purple}
+                        isExpanded={expandedMonths.has(monthYear)}
+                        onToggle={() => toggleMonth(monthYear)}
+                        onDelete={deleteTransaction}
+                      />
+                    ))}
+                  </ScrollableHistory>
+                </div>
+              )}
+            </div>
 
-            {/* ── Transaction Logger ─────────────────────── */}
             <div style={{ flex: "1 1 240px", minWidth: 220 }}>
               <Section title="Log Taxable Transaction">
                 <InputField label="Date" type="date" value={txnForm.date} onChange={v => setTxnForm({ ...txnForm, date: v })} />
@@ -1690,7 +1706,7 @@ export default function WhaleOS() {
             </div>
           </div>
         )}
-        
+
         {tab === "sbloc" && (
           <Section title="SBLOC Health Monitor">
             <Grid cols={3} gap={10}>
@@ -1711,7 +1727,6 @@ export default function WhaleOS() {
                 ]} />
               </div>
               <div style={{ flex: "1 1 240px" }}>
-                {/* --- Dán khối Intel vào đây --- */}
                 <div style={{ background: `linear-gradient(135deg, ${C.card}, #1E1B4B)`, border: `1px solid ${C.purple}40`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, marginBottom: 8, textTransform: "uppercase" }}>🛡️ Safe Borrowing Intel</div>
                   <Grid cols={2} gap={10}>
@@ -1726,8 +1741,8 @@ export default function WhaleOS() {
                   </Grid>
                   <div style={{ marginTop: 10, fontSize: 11, color: C.textDim, fontStyle: "italic" }}>
                     Dựa trên NAV: ${fmt(taxable.total)}. Bạn có thể vay thêm <span style={{ color: C.cyan, fontWeight: 700 }}>${fmt(remainingSafeCapacity)}</span> an toàn.
+                  </div>
                 </div>
-              </div>
 
                 <Section title="Update SBLOC Debt">
                   <InputField label="Date" type="date" value={debtForm.date} onChange={v => setDebtForm({ ...debtForm, date: v })} />
@@ -1752,27 +1767,72 @@ export default function WhaleOS() {
           </Section>
         )}
 
+        {/* [UPGRADE 3] Advanced Dividends Management */}
         {tab === "dividends" && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 240px" }}>
               <Section title="Log Dividend">
                 <InputField label="Date" type="date" value={divForm.date} onChange={v => setDivForm({ ...divForm, date: v })} />
-                {taxTickers.length > 0 && <SelectField label="Ticker" value={divForm.ticker} onChange={v => setDivForm({ ...divForm, ticker: v })} options={taxTickers} />}
+                {taxTickers.length > 0 && <SelectField label="Ticker" value={divForm.ticker} onChange={v => setDivForm({ ...divForm, ticker: v })} options={[...new Set([...taxTickers, ...assets.filter(a => a.account_type === "Roth").map(a => a.ticker)])]} />}
                 <InputField label="Amount ($)" type="number" value={divForm.amount} onChange={v => setDivForm({ ...divForm, amount: v })} step="1" />
                 <Btn onClick={handleDiv} full>Record Dividend</Btn>
               </Section>
             </div>
             <div style={{ flex: "2 1 300px" }}>
               <MetricCard label="Total Dividends Received" value={`$${fmt(totalDivs)}`} color={C.green} large />
-              <div style={{ marginTop: 12 }}>
-                {dividends.slice().reverse().slice(0, 20).map(d => (
-                  <div key={d.id} style={{ display: "flex", justifyContent: "space-between", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 12px", marginBottom: 4, fontSize: 12 }}>
-                    <span style={{ color: C.textDim }}>{d.date}</span>
-                    <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
-                    <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
-                  </div>
-                ))}
-              </div>
+
+              {/* Grouped dividends by month with ticker breakdown */}
+              <ScrollableHistory maxHeight={480}>
+                <div style={{ marginTop: 12 }}>
+                  {groupedDividends.length > 0 ? groupedDividends.map(([monthYear, divs]) => {
+                    const monthTotal = divs.reduce((s, d) => s + d.amount, 0);
+                    // Ticker breakdown for this month
+                    const tickerTotals = {};
+                    divs.forEach(d => {
+                      if (!tickerTotals[d.ticker]) tickerTotals[d.ticker] = 0;
+                      tickerTotals[d.ticker] += d.amount;
+                    });
+                    return (
+                      <div key={monthYear} style={{ marginBottom: 14 }}>
+                        <div style={{
+                          background: `${C.green}10`, padding: "6px 12px", borderRadius: "8px 8px 0 0",
+                          borderLeft: `3px solid ${C.green}`, display: "flex", justifyContent: "space-between", alignItems: "center",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: C.green }}>💰 {monthYear}</span>
+                            <span style={{ fontSize: 9, color: C.textDim }}>{divs.length} DIVIDEND{divs.length !== 1 ? "S" : ""}</span>
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(monthTotal, 0)}</span>
+                        </div>
+                        {/* Ticker summary pills */}
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "4px 10px", background: C.cardAlt, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
+                          {Object.entries(tickerTotals).map(([ticker, amt]) => (
+                            <span key={ticker} style={{
+                              fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                              padding: "2px 6px", borderRadius: 4, background: `${C.green}10`, color: C.green,
+                              border: `1px solid ${C.green}20`,
+                            }}>
+                              {ticker}: +${fmt(amt, 0)}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
+                          {[...divs].sort((a, b) => b.date.localeCompare(a.date)).map(d => (
+                            <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                              <span style={{ color: C.textDim }}>{d.date}</span>
+                              <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
+                              <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
+                              <button onClick={() => deleteDividend(d.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 20 }}>No dividends recorded yet.</div>
+                  )}
+                </div>
+              </ScrollableHistory>
             </div>
           </div>
         )}
@@ -1901,7 +1961,7 @@ export default function WhaleOS() {
   };
 
   // ═══════════════════════════════════════════════════════════
-  //  PAGE: MARKET INTEL (NEW)
+  //  PAGE: MARKET INTEL
   // ═══════════════════════════════════════════════════════════
   const MarketIntelPage = () => {
     const [heatView, setHeatView] = useState("mag7");
@@ -1909,7 +1969,6 @@ export default function WhaleOS() {
     const [periodData, setPeriodData] = useState(heatmapData);
     const [loadingHeat, setLoadingHeat] = useState(false);
 
-    // Fetch heatmap when period or view changes
     useEffect(() => {
       if (!apiOnline) { setPeriodData(heatmapData); return; }
       let cancelled = false;
@@ -1932,7 +1991,6 @@ export default function WhaleOS() {
       return () => { cancelled = true; };
     }, [heatPeriod, apiOnline]);
 
-    // Fed probabilities from settings (manual override since FRED doesn't provide these)
     const fedNextMeeting = settings.fed_next_meeting || fedRate.nextMeeting || "—";
     const fedProbHold = parseFloat(settings.fed_prob_hold) || 0;
     const fedProbCut = parseFloat(settings.fed_prob_cut) || 0;
@@ -2149,7 +2207,6 @@ export default function WhaleOS() {
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: apiOnline ? C.green : C.red, boxShadow: apiOnline ? `0 0 6px ${C.green}` : "none", animation: apiOnline ? "pulse 2s infinite" : "none" }} />
                 <span style={{ fontSize: 9, fontWeight: 700, color: apiOnline ? C.green : C.red, letterSpacing: "0.05em" }}>{apiOnline ? "LIVE" : "OFFLINE"}</span>
               </div>
-              {/* ── Cloud Status Badge ── */}
               <CloudBadge status={cloudStatus} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2182,7 +2239,7 @@ export default function WhaleOS() {
         {renderPage()}
       </main>
 
-      {/* BOTTOM NAVIGATION (Mobile-friendly) */}
+      {/* BOTTOM NAVIGATION */}
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.bg + "F5", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", padding: "6px 0 max(6px, env(safe-area-inset-bottom))", zIndex: 100 }}>
         {NAV_ITEMS.map(n => (
           <button key={n.id} onClick={() => setPage(n.id)} style={{
