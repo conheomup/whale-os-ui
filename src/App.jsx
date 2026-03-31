@@ -507,52 +507,59 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
   
+  const renderCustomizedLabel = (props) => {
+    const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
+    if (percent < 0.05) return null; // Chỉ hiện nhãn cho các mã chiếm > 5% để tránh rối mắt
+
+    const RADIAN = Math.PI / 180;
+    const sin = Math.sin(-RADIAN * midAngle);
+    const cos = Math.cos(-RADIAN * midAngle);
+    
+    // Thu ngắn các khoảng cách đường kẻ (sx, mx, ex) để tối ưu cho mobile
+    const sx = cx + (outerRadius + 2) * cos;
+    const sy = cy + (outerRadius + 2) * sin;
+    const mx = cx + (outerRadius + 10) * cos;
+    const my = cy + (outerRadius + 10) * sin;
+    const ex = mx + (cos >= 0 ? 1 : -1) * 12; // Đường ngang ngắn hơn (12 thay vì 22)
+    const ey = my;
+    const textAnchor = cos >= 0 ? 'start' : 'end';
+    const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
+
+    return (
+      <g>
+        <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
+        <circle cx={ex} cy={ey} r={2} fill={color} />
+        <text x={ex + (cos >= 0 ? 1 : -1) * 4} y={ey} dy={4} textAnchor={textAnchor} fill={C.text} fontSize={10} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
+          {payload.ticker}
+        </text>
+      </g>
+    );
+  };
+
   return (
-    <div style={{ position: "relative", width: "100%", height: 250, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ position: "relative", width: "100%", height: 300 }}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           {hasData ? (
             <Pie 
-              data={data} 
-              dataKey="value" 
-              nameKey="ticker" 
-              cx="50%" cy="50%" 
-              innerRadius="65%" // Làm vòng mỏng hơn để rộng tâm
-              outerRadius="90%" 
-              paddingAngle={2} 
-              strokeWidth={0}
+              data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" 
+              innerRadius="72%"  // Tăng lên 72% để vòng tròn mỏng hơn, không đè số ở giữa
+              outerRadius="88%" 
+              paddingAngle={3} strokeWidth={0}
+              label={renderCustomizedLabel} labelLine={false}
             >
-              {data.map((_, i) => (
-                <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />
-              ))}
+              {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="65%" outerRadius="90%" strokeWidth={0}>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="72%" outerRadius="88%" strokeWidth={0}>
               <Cell fill={C.border} />
             </Pie>
           )}
         </PieChart>
       </ResponsiveContainer>
-      
-      {/* TÂM VÒNG TRÒN: Đảm bảo luôn nằm chính giữa và không đè số */}
-      <div style={{ 
-        position: "absolute", 
-        textAlign: "center", 
-        pointerEvents: "none",
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center"
-      }}>
-        <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>TOTAL NAV</div>
-        <div style={{ 
-          fontSize: 22, 
-          fontWeight: 800, 
-          color: C.text, 
-          fontFamily: "'IBM Plex Mono', monospace",
-          lineHeight: 1
-        }}>
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none", width: "100%" }}>
+        <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.1em" }}>TOTAL NAV</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: accentColor, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1 }}>
           {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
       </div>
@@ -2301,7 +2308,7 @@ export default function WhaleOS() {
       </main>
 
       {/* BOTTOM NAVIGATION */}
-      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.bg + "F5", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", padding: "6px 0 max(6px, env(safe-area-inset-bottom))", zIndex: 100 }}>
+      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.bg + "F5", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", padding: "6px max(0px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left))", zIndex: 100 }}>
         {NAV_ITEMS.map(n => (
           <button key={n.id} onClick={() => setPage(n.id)} style={{
             background: "none", border: "none", cursor: "pointer", padding: "4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
