@@ -629,27 +629,37 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
 }
 
 function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
-  const headers = showTarget ? ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%", "Tgt%"] : ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%"];
+  // Thêm "Action" vào danh sách tiêu đề nếu showTarget = true
+  const headers = showTarget 
+    ? ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%", "Tgt%", "Action"] 
+    : ["Ticker", "Shares", "Price", "Value", "P/L", "Wt%"];
+
   return (
     <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
         <thead>
           <tr>{headers.map(h => (
-            <th key={h} style={{ textAlign: h === "Ticker" ? "left" : "right", padding: "5px 7px", color: C.textDim, borderBottom: `1px solid ${C.border}`, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+            <th key={h} style={{ textAlign: h === "Ticker" ? "left" : "right", padding: "6px 4px", color: C.textDim, borderBottom: `1px solid ${C.border}`, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
           ))}</tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
-            <tr><td colSpan={headers.length} style={{ padding: 20, textAlign: "center", color: C.textDim, fontSize: 13 }}>No positions in this view.</td></tr>
+            <tr><td colSpan={headers.length} style={{ padding: 20, textAlign: "center", color: C.textDim }}>No positions.</td></tr>
           ) : rows.map(r => (
             <tr key={r.ticker} style={{ borderBottom: `1px solid ${C.border}10` }}>
-              <td style={{ padding: "5px 7px", fontWeight: 700, color: accentColor }}>{r.ticker}</td>
-              <td style={{ textAlign: "right", padding: "5px 7px", color: C.text }}>{r.shares.toFixed(4)}</td>
-              <td style={{ textAlign: "right", padding: "5px 7px", color: C.textMid }}>${fmt(r.price)}</td>
-              <td style={{ textAlign: "right", padding: "5px 7px", color: C.text }}>${fmt(r.value)}</td>
-              <td style={{ textAlign: "right", padding: "5px 7px", color: r.pl >= 0 ? C.green : C.red }}>{r.pl >= 0 ? "+" : ""}${fmt(r.pl)}</td>
-              <td style={{ textAlign: "right", padding: "5px 7px", color: C.textMid }}>{r.weight.toFixed(1)}%</td>
-              {showTarget && <td style={{ textAlign: "right", padding: "5px 7px", color: C.amber }}>{r.targetWeight}%</td>}
+              <td style={{ padding: "8px 4px", fontWeight: 700, color: accentColor }}>{r.ticker}</td>
+              <td style={{ textAlign: "right", padding: "8px 4px", color: C.text }}>{r.shares.toFixed(3)}</td>
+              <td style={{ textAlign: "right", padding: "8px 4px", color: C.textMid }}>${fmt(r.price)}</td>
+              <td style={{ textAlign: "right", padding: "8px 4px", color: C.text }}>${fmt(r.value)}</td>
+              <td style={{ textAlign: "right", padding: "8px 4px", color: r.pl >= 0 ? C.green : C.red }}>{r.pl >= 0 ? "+" : ""}${fmt(r.pl, 0)}</td>
+              <td style={{ textAlign: "right", padding: "8px 4px", color: C.textMid }}>{r.weight.toFixed(1)}%</td>
+              {showTarget && <td style={{ textAlign: "right", padding: "8px 4px", color: C.amber }}>{r.targetWeight}%</td>}
+              {/* --- CỘT ACTION: TỰ TÍNH TOÁN REBALANCE --- */}
+              {showTarget && (
+                <td style={{ textAlign: "right", padding: "8px 4px", fontWeight: 700, color: (r.rebalance || 0) >= 0 ? C.green : C.red }}>
+                  {(r.rebalance || 0) >= 0 ? `+${fmt(r.rebalance, 0)}` : `${fmt(r.rebalance, 0)}`}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -1311,10 +1321,16 @@ export default function WhaleOS() {
         ? roth.rows.filter(r => r.targetWeight > 0)
         : roth.rows;
       const total = filtered.reduce((s, r) => s + r.value, 0);
-      const withWeight = total > 0
-        ? filtered.map(r => ({ ...r, weight: (r.value / total) * 100 }))
+      const withRebalance = total > 0
+        ? filtered.map(r => {
+            const currentWeight = (r.value / total) * 100;
+            // Công thức: (Tỉ trọng mục tiêu * Tổng NAV) - Giá trị hiện tại
+            const targetVal = (r.targetWeight / 100) * total;
+            const rebalance = targetVal - r.value;
+            return { ...r, weight: currentWeight, rebalance };
+          })
         : filtered;
-      return { displayRows: withWeight, displayTotal: total };
+      return { displayRows: withRebalance, displayTotal: total };
     }, [roth.rows, rothView]);
 
     const donutData = useMemo(() => displayRows.filter(r => r.value > 0), [displayRows]);
@@ -1485,10 +1501,15 @@ export default function WhaleOS() {
         ? taxable.rows.filter(r => r.targetWeight > 0)
         : taxable.rows;
       const total = filtered.reduce((s, r) => s + r.value, 0);
-      const withWeight = total > 0
-        ? filtered.map(r => ({ ...r, weight: (r.value / total) * 100 }))
+      const withRebalance = total > 0
+        ? filtered.map(r => {
+            const currentWeight = (r.value / total) * 100;
+            const targetVal = (r.targetWeight / 100) * total;
+            const rebalance = targetVal - r.value;
+            return { ...r, weight: currentWeight, rebalance };
+          })
         : filtered;
-      return { displayRows: withWeight, displayTotal: total };
+      return { displayRows: withRebalance, displayTotal: total };
     }, [taxable.rows, taxView]);
 
     const donutData = useMemo(() => displayRows.filter(r => r.value > 0), [displayRows]);
