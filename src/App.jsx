@@ -333,10 +333,30 @@ const currentYear = () => String(new Date().getFullYear());
 
 function MetricCard({ label, value, sub, color = C.cyan, large }) {
   return (
-    <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: large ? "20px 24px" : "14px 18px", flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: large ? 28 : 22, fontWeight: 700, color, fontFamily: "'IBM Plex Mono', monospace", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 2 }}>{sub}</div>}
+    <div style={{ 
+      background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, 
+      border: `1px solid ${C.border}`, 
+      borderRadius: 14, 
+      padding: large ? "16px 20px" : "12px 14px", 
+      flex: 1, 
+      minWidth: 0,
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center"
+    }}>
+      <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{label}</div>
+      <div style={{ 
+        fontSize: large ? "calc(1.2rem + 0.5vw)" : "calc(1rem + 0.3vw)", 
+        fontWeight: 700, 
+        color, 
+        fontFamily: "'IBM Plex Mono', monospace", 
+        marginTop: 4, 
+        lineHeight: 1.1,
+        wordBreak: "break-word" // Cho phép xuống dòng nếu quá dài
+      }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 10, color: C.textDim, marginTop: 2, opacity: 0.8 }}>{sub}</div>}
     </div>
   );
 }
@@ -523,7 +543,7 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
           )}
         </PieChart>
       </ResponsiveContainer>
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
           {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
@@ -570,7 +590,18 @@ function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
 }
 
 function Grid({ children, cols = 3, gap = 12 }) {
-  return <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap }}>{children}</div>;
+  return (
+    <div 
+      className={`whale-grid-${cols}`} 
+      style={{ 
+        display: "grid", 
+        gap, 
+        gridTemplateColumns: `repeat(${cols}, 1fr)` 
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 const CustomTooltip = ({ active, payload, label, prefix = "$" }) => {
@@ -2191,8 +2222,17 @@ export default function WhaleOS() {
         ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
         input[type="range"] { height: 4px; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @media (max-width: 640px) {
-          .whale-grid-3 { grid-template-columns: 1fr !important; }
+        @media (max-width: 768px) {
+          .whale-grid-3, .whale-grid-4 { 
+            grid-template-columns: repeat(2, 1fr) !important; 
+          }
+        }
+        @media (max-width: 480px) {
+          .whale-grid-2, .whale-grid-3, .whale-grid-4 { 
+            grid-template-columns: 1fr !important; 
+          }
+          /* Chỉnh lại font size tiêu đề cho điện thoại nhỏ */
+          h2 { font-size: 18px !important; }
         }
       `}</style>
 
