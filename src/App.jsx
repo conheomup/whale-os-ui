@@ -282,26 +282,29 @@ const Quant = {
     for (const a of filtered) {
       const t = a.ticker;
       const txns = transactions.filter(tx => tx.ticker === t);
-      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.shares : tx.shares), 0);
-      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.total_amount : tx.total_amount), 0);
-      const price = prices[t] || 0;
+      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.shares || 0) : parseFloat(tx.shares || 0)), 0);
+      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.total_amount || 0) : parseFloat(tx.total_amount || 0)), 0);
+      const price = parseFloat(prices[t]) || 0;
       const value = netShares * price;
       const pl = value - costBasis;
-      const plPct = costBasis > 0 ? (pl / costBasis) * 100 : 0;
-      rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, plPct, weight: 0, targetWeight: a.target_weight });
+      rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, targetWeight: a.target_weight });
     }
     const total = rows.reduce((s, r) => s + r.value, 0);
     if (total > 0) rows = rows.map(r => ({ ...r, weight: (r.value / total) * 100 }));
     return { rows, total };
   },
   ytdW2Gross(incomes, year) {
-    return incomes.filter(i => i.month_year.startsWith(year)).reduce((s, i) => s + (i.w2_gross || 0), 0);
+    if (!Array.isArray(incomes)) return 0;
+    return incomes
+      .filter(i => i.month_year && typeof i.month_year === "string" && i.month_year.startsWith(year))
+      .reduce((s, i) => s + (parseFloat(i.w2_gross) || 0), 0);
   },
+
   ytdRothContributions(transactions, assets, year) {
     const rothTickers = new Set(assets.filter(a => a.account_type === "Roth").map(a => a.ticker));
     return transactions
-      .filter(t => t.date.startsWith(year) && rothTickers.has(t.ticker))
-      .reduce((s, t) => s + (t.type === "Sell" ? -t.total_amount : t.total_amount), 0);
+      .filter(t => t.date && typeof t.date === "string" && t.date.startsWith(year) && rothTickers.has(t.ticker))
+      .reduce((s, t) => s + (t.type === "Sell" ? -parseFloat(t.total_amount || 0) : parseFloat(t.total_amount || 0)), 0);
   },
   totalInvested(transactions, assets, accountType) {
     if (!accountType) return transactions.reduce((s, t) => s + (t.type === "Sell" ? -t.total_amount : t.total_amount), 0);
@@ -375,9 +378,17 @@ function AlertBanner({ type, children }) {
 }
 
 function ProgressBar({ pct, color = C.cyan, height = 10 }) {
+  // Ép pct về số, nếu lỗi thì mặc định là 0
+  const safePct = isNaN(parseFloat(pct)) ? 0 : Math.max(0, Math.min(parseFloat(pct), 100));
   return (
     <div style={{ background: C.cardAlt, borderRadius: height, height, overflow: "hidden", width: "100%" }}>
-      <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: `linear-gradient(90deg, ${color}88, ${color})`, borderRadius: height, transition: "width 0.8s ease" }} />
+      <div style={{ 
+        height: "100%", 
+        width: `${safePct}%`, 
+        background: `linear-gradient(90deg, ${color}88, ${color})`, 
+        borderRadius: height, 
+        transition: "width 0.8s ease" 
+      }} />
     </div>
   );
 }
@@ -1031,7 +1042,12 @@ export default function WhaleOS() {
   const ytdRoth = useMemo(() => Quant.ytdRothContributions(transactions, assets, year), [transactions, assets, year]);
   const rothSpace = Math.max(ytdW2 - ytdRoth, 0);
   const rothBreached = ytdRoth > ytdW2 && ytdW2 > 0;
-  const rothPct = ytdW2 > 0 ? (ytdRoth / ytdW2) * 100 : (ytdRoth > 0 ? 100 : 0);
+  const rothPct = useMemo(() => {
+  const w2 = parseFloat(ytdW2) || 0;
+  const roth = parseFloat(ytdRoth) || 0;
+  if (w2 <= 0) return roth > 0 ? 100 : 0;
+  return Math.min((roth / w2) * 100, 200); // Giới hạn max 200% để tránh lỗi CSS
+  }, [ytdW2, ytdRoth]);
   const avgSurplus = useMemo(() => {
     if (!incomes.length) return 0;
     const surps = incomes.map(i => Quant.netSurplus(i, settings.monthly_expenses));
