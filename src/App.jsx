@@ -2274,11 +2274,11 @@ export default function WhaleOS() {
   // ═══════════════════════════════════════════════════════════
   const NAV_ITEMS = [
     { id: "dashboard", icon: "🐳", label: "Dashboard" },
-    { id: "cashflow", icon: "🐷", label: "Cashflow" },
-    { id: "roth", icon: "🌴", label: "Roth" },
-    { id: "taxable", icon: "📈", label: "Taxable" },
-    { id: "strategy", icon: "🧭", label: "Strategy" },
-    { id: "market", icon: "🌍", label: "Market" },
+    { id: "cashflow", icon: "🫏", label: "Cashflow" },
+    { id: "roth", icon: "🛡️", label: "Roth" },
+    { id: "taxable", icon: "🐦‍🔥", label: "Taxable" },
+    { id: "strategy", icon: "🧮", label: "Strategy" },
+    { id: "market", icon: "🛰", label: "Market" },
   ];
 
   const renderPage = () => {
