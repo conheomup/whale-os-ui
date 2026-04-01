@@ -317,11 +317,14 @@ const Quant = {
 //  THEME & CONSTANTS — TRUE BLACK OLED
 // ═══════════════════════════════════════════════════════════════
 const C = {
-  bg: "#000000", card: "#080E1A", cardAlt: "#0D1525", border: "#141E30",
-  borderLight: "#1C2B42", cyan: "#00D4FF", cyanDim: "#0891b2",
-  purple: "#8B5CF6", purpleDim: "#6D28D9", amber: "#F59E0B",
-  red: "#EF4444", green: "#22C55E", greenDim: "#16A34A",
-  text: "#E2E8F0", textDim: "#64748B", textMid: "#94A3B8",
+  bg: "#000000", 
+  card: "#0C1425",      // Sáng hơn một chút so với #080E1A
+  cardAlt: "#141D2E",   // Rõ ràng hơn để phân biệt các ô
+  border: "#26354D",    // Viền nổi bật hơn hẳn bản cũ
+  borderLight: "#334461",
+  text: "#F8FAFC",      // Trắng sứ để nhìn cực rõ
+  textDim: "#94A3B8",   // Tăng từ #64748B lên để các nhãn (labels) rõ nét
+  textMid: "#CBD5E1",
 };
 const DONUT_COLORS = ["#00D4FF", "#8B5CF6", "#F59E0B", "#22C55E", "#EC4899", "#F97316", "#06B6D4", "#A78BFA"];
 const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -1408,6 +1411,12 @@ export default function WhaleOS() {
     const autoTotal = form.shares * form.price;
     const rothInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Roth"), [transactions, assets]);
     const rothPL = roth.total - rothInvested;
+    
+    const IRS_ANNUAL_LIMIT = 7500; // Hạn mức cứng của IRS năm 2026
+    const effectiveLimit = Math.min(ytdW2, IRS_ANNUAL_LIMIT);
+    const rothSpace = Math.max(effectiveLimit - ytdRoth, 0);
+    const rothBreached = ytdRoth > effectiveLimit;
+    const rothPct = effectiveLimit > 0 ? (ytdRoth / effectiveLimit) * 100 : (ytdRoth > 0 ? 100 : 0);
 
     const { displayRows, displayTotal } = useMemo(() => {
       const filtered = rothView === "core" ? roth.rows.filter(r => r.targetWeight > 0) : roth.rows;
