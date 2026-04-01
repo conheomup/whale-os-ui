@@ -516,7 +516,7 @@ function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 
     const iy = cy + innerLabelRadius * Math.sin(-midAngle * Math.PI / 180);
 
     // 2. Nhãn Ticker nằm NGOÀI (đường kẻ ngắn)
-    if (percent < 0.05) return (
+    if (percent < 0.02) return (
       <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight="bold">
         {`${(percent * 100).toFixed(0)}%`}
       </text>
@@ -1147,8 +1147,8 @@ export default function WhaleOS() {
         </Grid>
         <div style={{ marginTop: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textDim, marginBottom: 4 }}>
-            <span>Progress to ${settings.target_nav.toLocaleString()}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.cyan }}>{pctToTarget.toFixed(1)}%</span>
+            <span>Progress to ${fmt(settings.target_nav, 0)} <span style={{color: C.textMid}}>(Hiện có: <span style={{color: C.cyan}}>${fmt(totalNAV, 0)}</span>)</span></span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.cyan, fontWeight: 700 }}>{pctToTarget.toFixed(1)}%</span>
           </div>
           <ProgressBar pct={pctToTarget} />
         </div>
@@ -1584,6 +1584,20 @@ export default function WhaleOS() {
     const taxTickers = assets.filter(a => a.account_type === "Taxable").map(a => a.ticker);
     const taxInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Taxable"), [transactions, assets]);
     const taxPL = taxable.total - taxInvested;
+    const [expandedDivMonths, setExpandedDivMonths] = useState(() => new Set([nowYM()]));
+
+    const toggleDivMonth = (my) => {
+      setExpandedDivMonths(prev => {
+        const next = new Set(prev);
+        if (next.has(my)) next.delete(my); else next.add(my);
+        return next;
+      });
+    };
+    const toggleAllDivs = () => {
+      const allMonths = groupedDividends.map(([my]) => my);
+      const allExpanded = allMonths.every(my => expandedDivMonths.has(my));
+      setExpandedDivMonths(allExpanded ? new Set() : new Set(allMonths));
+    };
 
     const { displayRows, displayTotal } = useMemo(() => {
       const filtered = taxView === "core" ? taxable.rows.filter(r => r.targetWeight > 0) : taxable.rows;
@@ -1869,48 +1883,61 @@ export default function WhaleOS() {
               {/* Grouped dividends by month with ticker breakdown */}
               <ScrollableHistory maxHeight={480}>
                 <div style={{ marginTop: 12 }}>
+                  {groupedDividends.length > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Dividend History</div>
+                      <button onClick={toggleAllDivs} style={{
+                        background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 12px",
+                        color: C.textMid, cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                      }}>
+                        {groupedDividends.every(([my]) => expandedDivMonths.has(my)) ? "▼ Collapse All" : "▶ Expand All"}
+                      </button>
+                    </div>
+                  )}
                   {groupedDividends.length > 0 ? groupedDividends.map(([monthYear, divs]) => {
                     const monthTotal = divs.reduce((s, d) => s + d.amount, 0);
-                    // Ticker breakdown for this month
                     const tickerTotals = {};
                     divs.forEach(d => {
                       if (!tickerTotals[d.ticker]) tickerTotals[d.ticker] = 0;
                       tickerTotals[d.ticker] += d.amount;
                     });
+                    const isExpanded = expandedDivMonths.has(monthYear);
                     return (
                       <div key={monthYear} style={{ marginBottom: 14 }}>
-                        <div style={{
-                          background: `${C.green}10`, padding: "6px 12px", borderRadius: "8px 8px 0 0",
-                          borderLeft: `3px solid ${C.green}`, display: "flex", justifyContent: "space-between", alignItems: "center",
-                        }}>
+                        <div 
+                          onClick={() => toggleDivMonth(monthYear)}
+                          style={{
+                            background: `${C.green}10`, padding: "6px 12px", borderRadius: isExpanded ? "8px 8px 0 0" : 8,
+                            borderLeft: `3px solid ${C.green}`, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"
+                          }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 10, transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", color: C.green }}>▶</span>
                             <span style={{ fontSize: 11, fontWeight: 800, color: C.green }}>💰 {monthYear}</span>
                             <span style={{ fontSize: 9, color: C.textDim }}>{divs.length} DIVIDEND{divs.length !== 1 ? "S" : ""}</span>
                           </div>
                           <span style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(monthTotal, 0)}</span>
                         </div>
-                        {/* Ticker summary pills */}
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "4px 10px", background: C.cardAlt, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
-                          {Object.entries(tickerTotals).map(([ticker, amt]) => (
-                            <span key={ticker} style={{
-                              fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
-                              padding: "2px 6px", borderRadius: 4, background: `${C.green}10`, color: C.green,
-                              border: `1px solid ${C.green}20`,
-                            }}>
-                              {ticker}: +${fmt(amt, 0)}
-                            </span>
-                          ))}
-                        </div>
-                        <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
-                          {[...divs].sort((a, b) => b.date.localeCompare(a.date)).map(d => (
-                            <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
-                              <span style={{ color: C.textDim }}>{d.date}</span>
-                              <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
-                              <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
-                              <button onClick={() => deleteDividend(d.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
+                        {isExpanded && (
+                          <>
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "4px 10px", background: C.cardAlt, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
+                              {Object.entries(tickerTotals).map(([ticker, amt]) => (
+                                <span key={ticker} style={{ fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", padding: "2px 6px", borderRadius: 4, background: `${C.green}10`, color: C.green, border: `1px solid ${C.green}20` }}>
+                                  {ticker}: +${fmt(amt, 0)}
+                                </span>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                            <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
+                              {[...divs].sort((a, b) => b.date.localeCompare(a.date)).map(d => (
+                                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                                  <span style={{ color: C.textDim }}>{d.date}</span>
+                                  <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
+                                  <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); deleteDividend(d.id); }} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
                   }) : (
@@ -2105,7 +2132,7 @@ export default function WhaleOS() {
 
         <Section title="🗺️ Market Heatmap">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-            <TabBar tabs={[{ id: "mag7", icon: "💎", label: "Magnificent 7" }, { id: "sectors", icon: "🏗️", label: "Sectors" }]} active={heatView} onChange={setHeatView} />
+            <TabBar tabs={[{ id: "mag7", icon: "💎", label: "Mag 7" }, { id: "sectors", icon: "🏗️", label: "Sectors" }]} active={heatView} onChange={setHeatView} />
             <div style={{ display: "inline-flex", gap: 2, background: C.card, borderRadius: 8, padding: 2 }}>
               {["1d", "1w"].map(p => (
                 <button key={p} onClick={() => setHeatPeriod(p)} style={{
@@ -2246,12 +2273,12 @@ export default function WhaleOS() {
   //  NAVIGATION
   // ═══════════════════════════════════════════════════════════
   const NAV_ITEMS = [
-    { id: "dashboard", icon: "🎯", label: "Dashboard" },
-    { id: "cashflow", icon: "💰", label: "Cashflow" },
-    { id: "roth", icon: "🛡️", label: "Roth" },
-    { id: "taxable", icon: "⚙️", label: "Taxable" },
-    { id: "strategy", icon: "🔬", label: "Strategy" },
-    { id: "market", icon: "🌐", label: "Market" },
+    { id: "dashboard", icon: "🐳", label: "Dashboard" },
+    { id: "cashflow", icon: "🐷", label: "Cashflow" },
+    { id: "roth", icon: "🌴", label: "Roth" },
+    { id: "taxable", icon: "📈", label: "Taxable" },
+    { id: "strategy", icon: "🧭", label: "Strategy" },
+    { id: "market", icon: "🌍", label: "Market" },
   ];
 
   const renderPage = () => {
@@ -2353,7 +2380,7 @@ export default function WhaleOS() {
             background: "none", border: "none", cursor: "pointer", padding: "4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
             color: page === n.id ? C.cyan : C.textDim, transition: "color 0.2s", minWidth: 0, flex: 1,
           }}>
-            <span style={{ fontSize: 18 }}>{n.icon}</span>
+            <span style={{ fontSize: 24, marginBottom: 2 }}>{n.icon}</span>
             <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.02em" }}>{n.label}</span>
             {page === n.id && <div style={{ width: 16, height: 2, borderRadius: 1, background: C.cyan, marginTop: 1 }} />}
           </button>
