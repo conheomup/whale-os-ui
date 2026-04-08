@@ -966,11 +966,17 @@ export default function WhaleOS() {
         const d = await r.json();
         const validPrices = {};
         if (d && typeof d === "object") {
-          for (const [ticker, price] of Object.entries(d)) {
-            const p = parseFloat(price);
-            if (p > 0) validPrices[ticker] = p;
+          for (const [ticker, priceData] of Object.entries(d)) {
+            // Nhận diện cấu trúc Object mới từ Backend
+            if (typeof priceData === "object" && priceData !== null) {
+              if (priceData.price > 0) validPrices[ticker] = priceData;
+            } else {
+              // Fallback an toàn nếu giá trị vẫn là số cũ
+              const p = parseFloat(priceData);
+              if (p > 0) validPrices[ticker] = { price: p, divRate: 0 };
           }
         }
+      }
         if (Object.keys(validPrices).length > 0) {
           setPrices(prev => {
             const merged = { ...prev, ...validPrices };
@@ -2346,8 +2352,14 @@ export default function WhaleOS() {
           {assets.map(a => (
             <div key={a.ticker} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.cyan, minWidth: 50 }}>{a.ticker}</span>
-              <input type="number" step="0.01" placeholder={prices[a.ticker] ? `$${prices[a.ticker]}` : "Price"}
-                value={priceInput[a.ticker] || ""} onChange={e => setPriceInput({ ...priceInput, [a.ticker]: parseFloat(e.target.value) || 0 })}
+              <input type="number" step="0.01" 
+                placeholder={prices[a.ticker] ? `$${typeof prices[a.ticker] === 'object' ? prices[a.ticker].price : prices[a.ticker]}` : "Price"}
+                value={priceInput[a.ticker] || ""} 
+                onChange={e => {
+                  const val = parseFloat(e.target.value) || 0;
+                  const oldDiv = typeof prices[a.ticker] === 'object' ? (prices[a.ticker].divRate || 0) : 0;
+                  setPriceInput({ ...priceInput, [a.ticker]: { price: val, divRate: oldDiv } });
+                }}
                 style={{ flex: 1, padding: "6px 10px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", outline: "none" }} />
             </div>
           ))}
