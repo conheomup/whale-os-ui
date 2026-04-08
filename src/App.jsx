@@ -282,16 +282,20 @@ const Quant = {
     for (const a of filtered) {
       const t = a.ticker;
       const txns = transactions.filter(tx => tx.ticker === t);
-      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.shares : tx.shares), 0);
-      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.total_amount : tx.total_amount), 0);
-      const price = prices[t] || 0;
+      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.shares || 0) : parseFloat(tx.shares || 0)), 0);
+      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.total_amount || 0) : parseFloat(tx.total_amount || 0)), 0);
+      
+      // Xử lý đọc giá từ object mới
+      const priceData = prices[t];
+      const price = typeof priceData === "object" ? (priceData.price || 0) : (parseFloat(priceData) || 0);
+      
       const value = netShares * price;
       const pl = value - costBasis;
       const plPct = costBasis > 0 ? (pl / costBasis) * 100 : 0;
       rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, plPct, weight: 0, targetWeight: a.target_weight });
     }
     const total = rows.reduce((s, r) => s + r.value, 0);
-    if (total > 0) rows = rows.map(r => ({ ...r, weight: (r.value / total) * 100 }));
+    rows = rows.map(r => ({ ...r, weight: total > 0 ? (r.value / total) * 100 : 0 }));
     return { rows, total };
   },
   ytdW2Gross(incomes, year) {
@@ -312,104 +316,70 @@ const Quant = {
   // ═══════════════════════════════════════════════════════════
   //  YIELD-ON-COST ENGINE
   // ═══════════════════════════════════════════════════════════
-  yieldOnCost(transactions, dividends, assets, prices) {
-    if (!dividends || dividends.length === 0) {
-      return { rows: [], totalCost: 0, totalAnnualDivs: 0, portfolioYoC: 0, portfolioCurrentYield: 0, useTTM: false, daysElapsed: 0 };
-    }
-
-    // 1. TÍNH TOÁN GIÁ VỐN CHÍNH XÁC (AVERAGE COST BASIS)
+yieldOnCost(transactions, dividends, assets, prices) {
     const costInfo = {};
-    // Phải sort transactions theo ngày để tính trung bình giá đúng thứ tự
     const sortedTxns = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
     
     sortedTxns.forEach(tx => {
       const t = tx.ticker;
       const amt = parseFloat(tx.total_amount) || 0;
       const sh = parseFloat(tx.shares) || 0;
-      
       if (!costInfo[t]) costInfo[t] = { shares: 0, totalCost: 0 };
 
       if (tx.type === "Sell") {
-        // Trừ giá vốn theo tỷ lệ cổ phiếu bán ra (Average Cost Method)
         const avgCostPerShare = costInfo[t].shares > 0 ? costInfo[t].totalCost / costInfo[t].shares : 0;
         costInfo[t].totalCost -= (sh * avgCostPerShare);
         costInfo[t].shares -= sh;
       } else {
-        // Buy hoặc DRIP
         costInfo[t].totalCost += amt;
         costInfo[t].shares += sh;
       }
     });
 
-    const nowMs = Date.now();
-    const ttmCutoffMs = nowMs - 365 * 24 * 60 * 60 * 1000;
     const assetMap = {};
     assets.forEach(a => { assetMap[a.ticker] = a; });
 
     const rows = [];
     let totalCost = 0;
-    let totalAnnualDivs = 0;
+    let totalForwardAnnualDivs = 0;
     let totalCurrentValue = 0;
 
-    // 2. TÍNH CỔ TỨC DỰA TRÊN THỜI GIAN CỦA TỪNG MÃ (PER TICKER)
     Object.keys(costInfo).forEach(ticker => {
-      const cost = Math.max(0, costInfo[ticker].totalCost); // Đảm bảo cost ko bị âm do sai số
+      const cost = Math.max(0, costInfo[ticker].totalCost);
       const shares = costInfo[ticker].shares;
-      if (cost <= 0 || shares <= 0.001) return; // Bỏ qua nếu đã bán hết
+      if (cost <= 0 || shares <= 0.001) return;
 
-      const tickerDivs = dividends.filter(d => d.ticker === ticker).sort((a, b) => a.date.localeCompare(b.date));
-      if (tickerDivs.length === 0) return;
+      // Lấy Forward Dividend Rate từ Backend
+      const priceData = prices[ticker];
+      const currentPrice = typeof priceData === "object" ? (priceData.price || 0) : (parseFloat(priceData) || 0);
+      const forwardDivRate = typeof priceData === "object" ? (priceData.divRate || 0) : 0;
 
-      let divTotal = 0;
-      let divTTM = 0;
-      
-      tickerDivs.forEach(d => {
-        const amt = parseFloat(d.amount) || 0;
-        divTotal += amt;
-        if (new Date(d.date).getTime() >= ttmCutoffMs) divTTM += amt;
-      });
-
-      // Lấy thời gian từ lần nhận cổ tức đầu tiên CỦA MÃ NÀY
-      const firstDivMs = new Date(tickerDivs[0].date).getTime();
-      let daysElapsed = Math.max(30, (nowMs - firstDivMs) / (1000 * 60 * 60 * 24)); // Minimum 30 ngày để tránh chia cho 1 làm bung data
-      const useTTM = daysElapsed >= 365;
-
-      // Nếu chưa đủ 1 năm, ngoại suy dựa trên số ngày thực tế của mã đó
-      const annualDivs = useTTM ? divTTM : (divTotal / daysElapsed) * 365;
-
-      const yoc = (annualDivs / cost) * 100;
-      const currentPrice = parseFloat(prices[ticker]) || 0;
       const currentValue = shares * currentPrice;
-      const currentYield = currentValue > 0 ? (annualDivs / currentValue) * 100 : 0;
+      const tickerDivs = (dividends || []).filter(d => d.ticker === ticker);
+      const totalReceived = tickerDivs.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
+
+      // --- LOGIC CHUẨN XÁC VỚI FORWARD DATA ---
+      const forwardAnnualIncome = shares * forwardDivRate; // Thu nhập 1 năm tới
+      const yoc = cost > 0 ? (forwardAnnualIncome / cost) * 100 : 0; // YoC dựa trên giá vốn
+      const currentYield = currentPrice > 0 ? (forwardDivRate / currentPrice) * 100 : 0;
       const avgCostPerShare = shares > 0 ? cost / shares : 0;
-      const accountType = assetMap[ticker]?.account_type || "—";
 
       rows.push({
-        ticker, accountType, shares,
-        avgCost: avgCostPerShare,
-        currentPrice, costBasis: cost,
-        currentValue, annualDivs,
-        ttmDivs: divTTM,
-        totalDivs: divTotal,
-        yoc, currentYield,
-        divCount: tickerDivs.length,
-        useTTM, daysElapsed: Math.round(daysElapsed)
+        ticker, accountType: assetMap[ticker]?.account_type || "—", shares,
+        avgCost: avgCostPerShare, currentPrice, costBasis: cost, currentValue, 
+        forwardDivRate, forwardAnnualIncome, totalReceived, yoc, currentYield
       });
 
       totalCost += cost;
-      totalAnnualDivs += annualDivs;
+      totalForwardAnnualDivs += forwardAnnualIncome;
       totalCurrentValue += currentValue;
     });
 
     rows.sort((a, b) => b.yoc - a.yoc);
-    const portfolioYoC = totalCost > 0 ? (totalAnnualDivs / totalCost) * 100 : 0;
-    const portfolioCurrentYield = totalCurrentValue > 0 ? (totalAnnualDivs / totalCurrentValue) * 100 : 0;
+    const portfolioYoC = totalCost > 0 ? (totalForwardAnnualDivs / totalCost) * 100 : 0;
+    const portfolioCurrentYield = totalCurrentValue > 0 ? (totalForwardAnnualDivs / totalCurrentValue) * 100 : 0;
     
-    // Tính số ngày trung bình của cả danh mục để hiển thị UI
-    const avgDaysElapsed = rows.length > 0 ? Math.round(rows.reduce((acc, r) => acc + r.daysElapsed, 0) / rows.length) : 0;
-    const allTTM = rows.length > 0 && rows.every(r => r.useTTM);
-
-    return { rows, totalCost, totalAnnualDivs, totalCurrentValue, portfolioYoC, portfolioCurrentYield, useTTM: allTTM, daysElapsed: avgDaysElapsed };
+    return { rows, totalCost, totalForwardAnnualDivs, totalCurrentValue, portfolioYoC, portfolioCurrentYield };
   }
 };
 
@@ -681,14 +651,14 @@ function Grid({ children, cols = 3, gap = 12 }) {
 // ═══════════════════════════════════════════════════════════════
 function YoCTable({ rows }) {
   if (!rows || rows.length === 0) {
-    return <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 24 }}>No dividend data yet. Log dividends in Taxable → Dividends.</div>;
+    return <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 24 }}>Calculating Forward Yield... Add assets to see data.</div>;
   }
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
         <thead>
           <tr>
-            {["Ticker", "Acct", "Avg Cost", "Price", "Cost Basis", "Annual Divs", "Yield", "YoC %"].map(h => (
+            {["Ticker", "Acct", "Avg Cost", "Price", "Cost Basis", "Fwd Income", "Fwd Yield", "YoC %"].map(h => (
               <th key={h} style={{ textAlign: h === "Ticker" || h === "Acct" ? "left" : "right", padding: "8px 6px", color: C.textDim, borderBottom: `1px solid ${C.border}`, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</th>
             ))}
           </tr>
@@ -704,7 +674,7 @@ function YoCTable({ rows }) {
                 <td style={{ textAlign: "right", padding: "8px 6px", color: C.textMid }}>${fmt(r.avgCost)}</td>
                 <td style={{ textAlign: "right", padding: "8px 6px", color: C.text }}>${fmt(r.currentPrice)}</td>
                 <td style={{ textAlign: "right", padding: "8px 6px", color: C.text }}>${fmt(r.costBasis, 0)}</td>
-                <td style={{ textAlign: "right", padding: "8px 6px", color: C.green, fontWeight: 600 }}>${fmt(r.annualDivs, 0)}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.green, fontWeight: 600 }}>${fmt(r.forwardAnnualIncome, 0)}</td>
                 <td style={{ textAlign: "right", padding: "8px 6px", color: C.textMid }}>{r.currentYield.toFixed(2)}%</td>
                 <td style={{ textAlign: "right", padding: "8px 6px", fontWeight: 800, color: yocColor }}>
                   {r.yoc.toFixed(2)}%
@@ -1311,27 +1281,27 @@ export default function WhaleOS() {
       {/* ═══════════════════════════════════════════════════════ */}
       {/*  YIELD-ON-COST TRACKER                                  */}
       {/* ═══════════════════════════════════════════════════════ */}
-      <Section title="💎 Yield-on-Cost Tracker">
+      <Section title="🔜 Yield-on-Cost Tracker">
         {yocData.rows.length > 0 ? (
           <>
             <Grid cols={4} gap={10}>
               <MetricCard
-                label="Portfolio YoC"
+                label="Forward YoC"
                 value={`${yocData.portfolioYoC.toFixed(2)}%`}
-                sub={`Annual: $${fmt(yocData.totalAnnualDivs, 0)}`}
+                sub={`Annual: $${fmt(yocData.totalForwardAnnualDivs, 0)}`}
                 color="#00FF88"
                 large
               />
               <MetricCard
-                label="Current Yield"
+                label="Forward Yield"
                 value={`${yocData.portfolioCurrentYield.toFixed(2)}%`}
                 sub="On market value"
                 color={C.cyan}
               />
               <MetricCard
-                label="Annual Income"
-                value={`$${fmt(yocData.totalAnnualDivs, 0)}`}
-                sub={`~$${fmt(yocData.totalAnnualDivs / 12, 0)}/mo`}
+                label="Expected Income"
+                value={`$${fmt(yocData.totalForwardAnnualDivs, 0)}`}
+                sub={`~$${fmt(yocData.totalForwardAnnualDivs / 12, 0)}/mo`}
                 color={C.green}
               />
               <MetricCard
@@ -1349,10 +1319,8 @@ export default function WhaleOS() {
               borderRadius: 10, padding: "10px 14px", fontSize: 12, color: C.textMid, lineHeight: 1.6,
             }}>
               <strong style={{ color: C.green }}>📈 YoC Insight:</strong>{" "}
-              {yocData.useTTM
-                ? `Using trailing-12-month dividend data (${yocData.daysElapsed} days of history).`
-                : `Annualizing from ${yocData.daysElapsed} days of dividend history (need 365+ for TTM).`}
-              {" "}YoC of <strong style={{ color: "#00FF88" }}>{yocData.portfolioYoC.toFixed(2)}%</strong> means every $1 you originally invested now returns ${(yocData.portfolioYoC / 100).toFixed(3)}/year in dividends.
+              Using real-time Forward Dividend Rates from Yahoo Finance. 
+              YoC of <strong style={{ color: "#00FF88" }}>{yocData.portfolioYoC.toFixed(2)}%</strong> means every $1 you originally invested is projected to return ${(yocData.portfolioYoC / 100).toFixed(3)}/year.
               {yocData.portfolioYoC > yocData.portfolioCurrentYield + 0.5 && (
                 <> Your YoC is <strong style={{ color: C.green }}>{(yocData.portfolioYoC - yocData.portfolioCurrentYield).toFixed(2)}%</strong> above current market yield — your early purchases are paying off.</>
               )}
