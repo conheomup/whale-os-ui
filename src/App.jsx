@@ -282,35 +282,134 @@ const Quant = {
     for (const a of filtered) {
       const t = a.ticker;
       const txns = transactions.filter(tx => tx.ticker === t);
-      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.shares || 0) : parseFloat(tx.shares || 0)), 0);
-      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -parseFloat(tx.total_amount || 0) : parseFloat(tx.total_amount || 0)), 0);
-      const price = parseFloat(prices[t]) || 0;
+      const netShares = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.shares : tx.shares), 0);
+      const costBasis = txns.reduce((s, tx) => s + (tx.type === "Sell" ? -tx.total_amount : tx.total_amount), 0);
+      const price = prices[t] || 0;
       const value = netShares * price;
       const pl = value - costBasis;
-      rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, targetWeight: a.target_weight });
+      const plPct = costBasis > 0 ? (pl / costBasis) * 100 : 0;
+      rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, plPct, weight: 0, targetWeight: a.target_weight });
     }
     const total = rows.reduce((s, r) => s + r.value, 0);
-    // Luôn luôn tạo biến weight, nếu total = 0 thì set weight = 0
-    rows = rows.map(r => ({ ...r, weight: total > 0 ? (r.value / total) * 100 : 0 }));
+    if (total > 0) rows = rows.map(r => ({ ...r, weight: (r.value / total) * 100 }));
     return { rows, total };
   },
   ytdW2Gross(incomes, year) {
-    if (!Array.isArray(incomes)) return 0;
-    return incomes
-      .filter(i => i.month_year && typeof i.month_year === "string" && i.month_year.startsWith(year))
-      .reduce((s, i) => s + (parseFloat(i.w2_gross) || 0), 0);
+    return incomes.filter(i => i.month_year.startsWith(year)).reduce((s, i) => s + (i.w2_gross || 0), 0);
   },
-
   ytdRothContributions(transactions, assets, year) {
     const rothTickers = new Set(assets.filter(a => a.account_type === "Roth").map(a => a.ticker));
     return transactions
-      .filter(t => t.date && typeof t.date === "string" && t.date.startsWith(year) && rothTickers.has(t.ticker))
-      .reduce((s, t) => s + (t.type === "Sell" ? -parseFloat(t.total_amount || 0) : parseFloat(t.total_amount || 0)), 0);
+      .filter(t => t.date.startsWith(year) && rothTickers.has(t.ticker))
+      .reduce((s, t) => s + (t.type === "Sell" ? -t.total_amount : t.total_amount), 0);
   },
   totalInvested(transactions, assets, accountType) {
     if (!accountType) return transactions.reduce((s, t) => s + (t.type === "Sell" ? -t.total_amount : t.total_amount), 0);
     const tickers = new Set(assets.filter(a => a.account_type === accountType).map(a => a.ticker));
     return transactions.filter(t => tickers.has(t.ticker)).reduce((s, t) => s + (t.type === "Sell" ? -t.total_amount : t.total_amount), 0);
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  //  YIELD-ON-COST ENGINE
+  // ═══════════════════════════════════════════════════════════
+  yieldOnCost(transactions, dividends, assets, prices) {
+    if (!dividends || dividends.length === 0) {
+      return { rows: [], totalCost: 0, totalAnnualDivs: 0, portfolioYoC: 0, portfolioCurrentYield: 0, useTTM: false, daysElapsed: 0 };
+    }
+
+    // 1. TÍNH TOÁN GIÁ VỐN CHÍNH XÁC (AVERAGE COST BASIS)
+    const costInfo = {};
+    // Phải sort transactions theo ngày để tính trung bình giá đúng thứ tự
+    const sortedTxns = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+    
+    sortedTxns.forEach(tx => {
+      const t = tx.ticker;
+      const amt = parseFloat(tx.total_amount) || 0;
+      const sh = parseFloat(tx.shares) || 0;
+      
+      if (!costInfo[t]) costInfo[t] = { shares: 0, totalCost: 0 };
+
+      if (tx.type === "Sell") {
+        // Trừ giá vốn theo tỷ lệ cổ phiếu bán ra (Average Cost Method)
+        const avgCostPerShare = costInfo[t].shares > 0 ? costInfo[t].totalCost / costInfo[t].shares : 0;
+        costInfo[t].totalCost -= (sh * avgCostPerShare);
+        costInfo[t].shares -= sh;
+      } else {
+        // Buy hoặc DRIP
+        costInfo[t].totalCost += amt;
+        costInfo[t].shares += sh;
+      }
+    });
+
+    const nowMs = Date.now();
+    const ttmCutoffMs = nowMs - 365 * 24 * 60 * 60 * 1000;
+    const assetMap = {};
+    assets.forEach(a => { assetMap[a.ticker] = a; });
+
+    const rows = [];
+    let totalCost = 0;
+    let totalAnnualDivs = 0;
+    let totalCurrentValue = 0;
+
+    // 2. TÍNH CỔ TỨC DỰA TRÊN THỜI GIAN CỦA TỪNG MÃ (PER TICKER)
+    Object.keys(costInfo).forEach(ticker => {
+      const cost = Math.max(0, costInfo[ticker].totalCost); // Đảm bảo cost ko bị âm do sai số
+      const shares = costInfo[ticker].shares;
+      if (cost <= 0 || shares <= 0.001) return; // Bỏ qua nếu đã bán hết
+
+      const tickerDivs = dividends.filter(d => d.ticker === ticker).sort((a, b) => a.date.localeCompare(b.date));
+      if (tickerDivs.length === 0) return;
+
+      let divTotal = 0;
+      let divTTM = 0;
+      
+      tickerDivs.forEach(d => {
+        const amt = parseFloat(d.amount) || 0;
+        divTotal += amt;
+        if (new Date(d.date).getTime() >= ttmCutoffMs) divTTM += amt;
+      });
+
+      // Lấy thời gian từ lần nhận cổ tức đầu tiên CỦA MÃ NÀY
+      const firstDivMs = new Date(tickerDivs[0].date).getTime();
+      let daysElapsed = Math.max(30, (nowMs - firstDivMs) / (1000 * 60 * 60 * 24)); // Minimum 30 ngày để tránh chia cho 1 làm bung data
+      const useTTM = daysElapsed >= 365;
+
+      // Nếu chưa đủ 1 năm, ngoại suy dựa trên số ngày thực tế của mã đó
+      const annualDivs = useTTM ? divTTM : (divTotal / daysElapsed) * 365;
+
+      const yoc = (annualDivs / cost) * 100;
+      const currentPrice = parseFloat(prices[ticker]) || 0;
+      const currentValue = shares * currentPrice;
+      const currentYield = currentValue > 0 ? (annualDivs / currentValue) * 100 : 0;
+      const avgCostPerShare = shares > 0 ? cost / shares : 0;
+      const accountType = assetMap[ticker]?.account_type || "—";
+
+      rows.push({
+        ticker, accountType, shares,
+        avgCost: avgCostPerShare,
+        currentPrice, costBasis: cost,
+        currentValue, annualDivs,
+        ttmDivs: divTTM,
+        totalDivs: divTotal,
+        yoc, currentYield,
+        divCount: tickerDivs.length,
+        useTTM, daysElapsed: Math.round(daysElapsed)
+      });
+
+      totalCost += cost;
+      totalAnnualDivs += annualDivs;
+      totalCurrentValue += currentValue;
+    });
+
+    rows.sort((a, b) => b.yoc - a.yoc);
+    const portfolioYoC = totalCost > 0 ? (totalAnnualDivs / totalCost) * 100 : 0;
+    const portfolioCurrentYield = totalCurrentValue > 0 ? (totalAnnualDivs / totalCurrentValue) * 100 : 0;
+    
+    // Tính số ngày trung bình của cả danh mục để hiển thị UI
+    const avgDaysElapsed = rows.length > 0 ? Math.round(rows.reduce((acc, r) => acc + r.daysElapsed, 0) / rows.length) : 0;
+    const allTTM = rows.length > 0 && rows.every(r => r.useTTM);
+
+    return { rows, totalCost, totalAnnualDivs, totalCurrentValue, portfolioYoC, portfolioCurrentYield, useTTM: allTTM, daysElapsed: avgDaysElapsed };
   }
 };
 
@@ -318,19 +417,11 @@ const Quant = {
 //  THEME & CONSTANTS — TRUE BLACK OLED
 // ═══════════════════════════════════════════════════════════════
 const C = {
-  bg: "#000000",
-  card: "#0A101E",      // Dịu mắt hơn
-  cardAlt: "#121A2B",
-  border: "#1E293B",    // Viền bớt chói
-  borderLight: "#334155",
-  cyan: "#00D4FF",
-  purple: "#8B5CF6",
-  amber: "#F59E0B",
-  red: "#EF4444", 
-  green: "#22C55E",
-  text: "#CBD5E1",      // Màu xám trắng (không chói như trắng tinh)
-  textDim: "#64748B",   // Nhãn mờ
-  textMid: "#94A3B8",
+  bg: "#000000", card: "#080E1A", cardAlt: "#0D1525", border: "#141E30",
+  borderLight: "#1C2B42", cyan: "#00D4FF", cyanDim: "#0891b2",
+  purple: "#8B5CF6", purpleDim: "#6D28D9", amber: "#F59E0B",
+  red: "#EF4444", green: "#22C55E", greenDim: "#16A34A",
+  text: "#E2E8F0", textDim: "#64748B", textMid: "#94A3B8",
 };
 const DONUT_COLORS = ["#00D4FF", "#8B5CF6", "#F59E0B", "#22C55E", "#EC4899", "#F97316", "#06B6D4", "#A78BFA"];
 const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -345,30 +436,10 @@ const currentYear = () => String(new Date().getFullYear());
 
 function MetricCard({ label, value, sub, color = C.cyan, large }) {
   return (
-    <div style={{ 
-      background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, 
-      border: `1px solid ${C.border}`, 
-      borderRadius: 14, 
-      padding: large ? "16px 20px" : "12px 14px", 
-      flex: 1, 
-      minWidth: 0,
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "center"
-    }}>
-      <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{label}</div>
-      <div style={{ 
-        fontSize: large ? "calc(1.2rem + 0.5vw)" : "calc(1rem + 0.3vw)", 
-        fontWeight: 700, 
-        color, 
-        fontFamily: "'IBM Plex Mono', monospace", 
-        marginTop: 4, 
-        lineHeight: 1.1,
-        wordBreak: "break-word" // Cho phép xuống dòng nếu quá dài
-      }}>
-        {value}
-      </div>
-      {sub && <div style={{ fontSize: 10, color: C.textDim, marginTop: 2, opacity: 0.8 }}>{sub}</div>}
+    <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: large ? "20px 24px" : "14px 18px", flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: large ? 28 : 22, fontWeight: 700, color, fontFamily: "'IBM Plex Mono', monospace", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
@@ -387,17 +458,9 @@ function AlertBanner({ type, children }) {
 }
 
 function ProgressBar({ pct, color = C.cyan, height = 10 }) {
-  // Ép pct về số, nếu lỗi thì mặc định là 0
-  const safePct = isNaN(parseFloat(pct)) ? 0 : Math.max(0, Math.min(parseFloat(pct), 100));
   return (
     <div style={{ background: C.cardAlt, borderRadius: height, height, overflow: "hidden", width: "100%" }}>
-      <div style={{ 
-        height: "100%", 
-        width: `${safePct}%`, 
-        background: `linear-gradient(90deg, ${color}88, ${color})`, 
-        borderRadius: height, 
-        transition: "width 0.8s ease" 
-      }} />
+      <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: `linear-gradient(90deg, ${color}88, ${color})`, borderRadius: height, transition: "width 0.8s ease" }} />
     </div>
   );
 }
@@ -526,73 +589,46 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
-  
-  const renderLabels = (props) => {
+  const renderCustomizedLabel = (props) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
-    
-    // 1. Nhãn % nằm TRONG mã donut
-    const innerLabelRadius = innerRadius + (outerRadius - innerRadius) * 0.5;
-    const ix = cx + innerLabelRadius * Math.cos(-midAngle * Math.PI / 180);
-    const iy = cy + innerLabelRadius * Math.sin(-midAngle * Math.PI / 180);
-
-    // 2. Nhãn Ticker nằm NGOÀI (đường kẻ ngắn)
-    if (percent < 0.02) return (
-      <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight="bold">
-        {`${(percent * 100).toFixed(0)}%`}
-      </text>
-    );
-
+    if (percent < 0.03) return null;
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-RADIAN * midAngle);
     const cos = Math.cos(-RADIAN * midAngle);
-    const sx = cx + (outerRadius + 2) * cos;
-    const sy = cy + (outerRadius + 2) * sin;
-    const mx = cx + (outerRadius + 10) * cos;
-    const my = cy + (outerRadius + 10) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * 10;
+    const sx = cx + (outerRadius + 5) * cos;
+    const sy = cy + (outerRadius + 5) * sin;
+    const mx = cx + (outerRadius + 20) * cos;
+    const my = cy + (outerRadius + 20) * sin;
+    const ex = mx + (cos >= 0 ? 1 : -1) * 22;
     const ey = my;
+    const textAnchor = cos >= 0 ? 'start' : 'end';
     const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
-
     return (
       <g>
-        {/* % Inside */}
-        <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight="bold">
-          {`${(percent * 100).toFixed(0)}%`}
-        </text>
-        {/* Ticker Outside */}
         <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
-        <text x={ex + (cos >= 0 ? 1 : -1) * 4} y={ey} dy={4} textAnchor={cos >= 0 ? 'start' : 'end'} fill={C.text} fontSize={10} fontWeight="700">
-          {payload.ticker}
+        <circle cx={ex} cy={ey} r={2.5} fill={color} />
+        <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} textAnchor={textAnchor} fill={C.text} fontSize={11} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
+          {`${payload.ticker} (${(percent * 100).toFixed(0)}%)`}
         </text>
       </g>
     );
   };
-
   return (
-    <div style={{ position: "relative", width: "100%", height: 300 }}>
-      <ResponsiveContainer width="100%" height="100%">
+    <div style={{ position: "relative", width: "100%" }}>
+      <ResponsiveContainer width="100%" height={320}>
         <PieChart>
           {hasData ? (
-            <Pie 
-              data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" 
-              innerRadius="70%" outerRadius="88%" paddingAngle={3} strokeWidth={0}
-              label={renderLabels} labelLine={false}
-            >
+            <Pie data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" paddingAngle={3} strokeWidth={0} label={renderCustomizedLabel} labelLine={false}>
               {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="70%" outerRadius="88%" strokeWidth={0}><Cell fill={C.border} /></Pie>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}><Cell fill={C.border} /></Pie>
           )}
-          <Tooltip 
-            formatter={(val, name, props) => [`$${fmt(val, 0)} (${props.payload.weight.toFixed(1)}%)`, name]}
-            contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} 
-          />
         </PieChart>
       </ResponsiveContainer>
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none", width: "100%" }}>
-        <div style={{ fontSize: 8, color: C.textDim, textTransform: "uppercase" }}>TOTAL NAV</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: accentColor, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1 }}>
-          ${fmt(totalValue, 0)}
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", pointerEvents: "none" }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
       </div>
     </div>
@@ -637,16 +673,48 @@ function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
 }
 
 function Grid({ children, cols = 3, gap = 12 }) {
+  return <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap }}>{children}</div>;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  YIELD-ON-COST TABLE COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function YoCTable({ rows }) {
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: C.textDim, fontSize: 12, textAlign: "center", padding: 24 }}>No dividend data yet. Log dividends in Taxable → Dividends.</div>;
+  }
   return (
-    <div 
-      className={`whale-grid-${cols}`} 
-      style={{ 
-        display: "grid", 
-        gap, 
-        gridTemplateColumns: `repeat(${cols}, 1fr)` 
-      }}
-    >
-      {children}
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
+        <thead>
+          <tr>
+            {["Ticker", "Acct", "Avg Cost", "Price", "Cost Basis", "Annual Divs", "Yield", "YoC %"].map(h => (
+              <th key={h} style={{ textAlign: h === "Ticker" || h === "Acct" ? "left" : "right", padding: "8px 6px", color: C.textDim, borderBottom: `1px solid ${C.border}`, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const yocColor = r.yoc >= 8 ? "#00FF88" : r.yoc >= 5 ? C.green : r.yoc >= 3 ? C.cyan : r.yoc >= 1 ? C.amber : C.textMid;
+            const yocLift = r.yoc - r.currentYield;
+            return (
+              <tr key={r.ticker} style={{ borderBottom: `1px solid ${C.border}15` }}>
+                <td style={{ padding: "8px 6px", fontWeight: 700, color: r.accountType === "Roth" ? C.cyan : C.purple }}>{r.ticker}</td>
+                <td style={{ padding: "8px 6px", fontSize: 9, color: C.textDim }}>{r.accountType}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.textMid }}>${fmt(r.avgCost)}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.text }}>${fmt(r.currentPrice)}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.text }}>${fmt(r.costBasis, 0)}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.green, fontWeight: 600 }}>${fmt(r.annualDivs, 0)}</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", color: C.textMid }}>{r.currentYield.toFixed(2)}%</td>
+                <td style={{ textAlign: "right", padding: "8px 6px", fontWeight: 800, color: yocColor }}>
+                  {r.yoc.toFixed(2)}%
+                  {yocLift > 0.1 && <span style={{ fontSize: 8, color: C.green, marginLeft: 4 }}>↑{yocLift.toFixed(1)}</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -818,11 +886,11 @@ const TreemapContent = ({ x, y, width, height, name, change, price }) => {
 //  VIX LABEL HELPER
 // ═══════════════════════════════════════════════════════════════
 function vixLabel(v) {
-  if (v > 30) return ["Extreme Fear", "#EF4444"]; // Red
-  if (v > 25) return ["Fear", "#F97316"];       // Orange
-  if (v > 20) return ["Bearish", "#F59E0B"];    // Amber
-  if (v > 15) return ["Neutral", "#94A3B8"];    // Gray
-  return ["Optimistic", "#22C55E"];             // Green
+  if (v > 30) return ["Extreme Fear", C.red];
+  if (v > 25) return ["Fear", "#FB923C"];
+  if (v > 20) return ["Bearish", C.amber];
+  if (v > 15) return ["Neutral", C.textMid];
+  return ["Optimistic", C.green];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -851,14 +919,7 @@ function CloudBadge({ status }) {
 export default function WhaleOS() {
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("dashboard");
-  
-  const [settings, setSettings] = useState({ 
-  target_nav: 200000, 
-  monthly_expenses: 1500, 
-  expected_annual_return: 0.10,
-  roth_limit: 7500 // Thêm hạn mức này
-  });
-
+  const [settings, setSettings] = useState({ target_nav: 200000, monthly_expenses: 1500, expected_annual_return: 0.10, fed_next_meeting: "2026-06-18", fed_prob_hold: 62, fed_prob_cut: 33, fed_prob_hike: 5 });
   const [incomes, setIncomes] = useState([]);
   const [assets, setAssets] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -890,7 +951,7 @@ export default function WhaleOS() {
 
     let online = false;
     try {
-      const h = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(60000) });
+      const h = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4000) });
       if (h.ok) online = true;
     } catch { /* offline */ }
     setApiOnline(online);
@@ -1058,6 +1119,7 @@ export default function WhaleOS() {
   const ytdRoth = useMemo(() => Quant.ytdRothContributions(transactions, assets, year), [transactions, assets, year]);
   const rothSpace = Math.max(ytdW2 - ytdRoth, 0);
   const rothBreached = ytdRoth > ytdW2 && ytdW2 > 0;
+  const rothPct = ytdW2 > 0 ? (ytdRoth / ytdW2) * 100 : (ytdRoth > 0 ? 100 : 0);
   const avgSurplus = useMemo(() => {
     if (!incomes.length) return 0;
     const surps = incomes.map(i => Quant.netSurplus(i, settings.monthly_expenses));
@@ -1076,6 +1138,12 @@ export default function WhaleOS() {
 
   // ── [UPGRADE 4] Net Equity ─────────────────────────────────
   const netEquity = totalNAV - latestDebt;
+
+  // ── [YIELD-ON-COST] Compute YoC across all dividend-paying holdings ──
+  const yocData = useMemo(
+    () => Quant.yieldOnCost(transactions, dividends, assets, prices),
+    [transactions, dividends, assets, prices]
+  );
 
   // ── VIX market summary ─────────────────────────────────────
   const [vlbl, vclr] = vixLabel(vixData.current);
@@ -1130,18 +1198,10 @@ export default function WhaleOS() {
       <Section title="🎭 Market Sentiment">
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
           <div style={{ flex: "1 1 180px", minWidth: 160 }}>
-            <SvgGauge 
-              value={vixData.current} 
-              max={50} 
-              label={vlbl} 
-              subLabel="VIX Short-term" 
-              thresholds={[
-                { from: 0, to: 0.3, color: "#22C55E" }, 
-                { from: 0.3, to: 0.4, color: "#84CC16" },
-                { from: 0.4, to: 0.5, color: "#F59E0B" }, 
-                { from: 0.5, to: 1, color: "#EF4444" },
-              ]} 
-            />
+            <SvgGauge value={vixData.current} max={50} label={vlbl} subLabel="VIX Short-term" thresholds={[
+              { from: 0, to: 0.3, color: C.green }, { from: 0.3, to: 0.4, color: "#84CC16" },
+              { from: 0.4, to: 0.5, color: C.amber }, { from: 0.5, to: 1, color: C.red },
+            ]} />
           </div>
           <div style={{ flex: "1 1 180px", minWidth: 160 }}>
             <SvgGauge value={vixData.midTerm} max={50} label={vixLabel(vixData.midTerm)[0]} subLabel="VIX Mid-term" thresholds={[
@@ -1181,8 +1241,8 @@ export default function WhaleOS() {
         </Grid>
         <div style={{ marginTop: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textDim, marginBottom: 4 }}>
-            <span>Progress to ${fmt(settings.target_nav, 0)} <span style={{color: C.textMid}}>(Hiện có: <span style={{color: C.cyan}}>${fmt(totalNAV, 0)}</span>)</span></span>
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.cyan, fontWeight: 700 }}>{pctToTarget.toFixed(1)}%</span>
+            <span>Progress to ${settings.target_nav.toLocaleString()}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.cyan }}>{pctToTarget.toFixed(1)}%</span>
           </div>
           <ProgressBar pct={pctToTarget} />
         </div>
@@ -1213,43 +1273,16 @@ export default function WhaleOS() {
       <Section title="🌐 Global Asset Allocation">
         {allHoldings.length > 0 ? (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 220px", minWidth: 200, position: 'relative', height: 280 }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <div style={{ flex: "1 1 200px", minWidth: 180 }}>
+              <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
-                  <Pie 
-                    data={allHoldings} 
-                    dataKey="value" 
-                    nameKey="ticker" 
-                    cx="50%" cy="50%" 
-                    innerRadius="68%" 
-                    outerRadius="88%" 
-                    paddingAngle={2} 
-                    strokeWidth={0}
-                    label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
-                      const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-                      const x = cx + radius * Math.cos(-midAngle * Math.PI / 180);
-                      const y = cy + radius * Math.sin(-midAngle * Math.PI / 180);
-                      return (
-                        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight="bold">
-                          {`${(percent * 100).toFixed(0)}%`}
-                        </text>
-                      );
-                    }}
-                    labelLine={false}
-                  >
+                  <Pie data={allHoldings} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="55%" outerRadius="85%" paddingAngle={2} strokeWidth={0}>
                     {allHoldings.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
                   </Pie>
-                  <Tooltip 
-                    formatter={(val, name, props) => [`$${fmt(val, 0)} (${props.payload.weight.toFixed(1)}%)`, name]}
-                    contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} 
-                  />
+                  <Tooltip formatter={(v) => `$${fmt(v)}`} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
                 </PieChart>
               </ResponsiveContainer>
-  
-              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
-                <div style={{ fontSize: 8, color: C.textDim, textTransform: "uppercase", fontWeight: 700 }}>TOTAL NAV</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: C.cyan, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalNAV, 0)}</div>
-              </div>
+              <div style={{ textAlign: "center", marginTop: -40, fontSize: 20, fontWeight: 700, color: C.cyan, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalNAV, 0)}</div>
             </div>
             <div style={{ flex: "2 1 300px", minWidth: 260, overflow: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -1273,6 +1306,86 @@ export default function WhaleOS() {
             </div>
           </div>
         ) : <div style={{ color: C.textDim, textAlign: "center", padding: 40 }}>No positions yet. Add transactions to see allocation.</div>}
+      </Section>
+
+      {/* ═══════════════════════════════════════════════════════ */}
+      {/*  YIELD-ON-COST TRACKER                                  */}
+      {/* ═══════════════════════════════════════════════════════ */}
+      <Section title="💎 Yield-on-Cost Tracker">
+        {yocData.rows.length > 0 ? (
+          <>
+            <Grid cols={4} gap={10}>
+              <MetricCard
+                label="Portfolio YoC"
+                value={`${yocData.portfolioYoC.toFixed(2)}%`}
+                sub={`Annual: $${fmt(yocData.totalAnnualDivs, 0)}`}
+                color="#00FF88"
+                large
+              />
+              <MetricCard
+                label="Current Yield"
+                value={`${yocData.portfolioCurrentYield.toFixed(2)}%`}
+                sub="On market value"
+                color={C.cyan}
+              />
+              <MetricCard
+                label="Annual Income"
+                value={`$${fmt(yocData.totalAnnualDivs, 0)}`}
+                sub={`~$${fmt(yocData.totalAnnualDivs / 12, 0)}/mo`}
+                color={C.green}
+              />
+              <MetricCard
+                label="Cost Basis"
+                value={`$${fmt(yocData.totalCost, 0)}`}
+                sub={`${yocData.rows.length} payer${yocData.rows.length !== 1 ? "s" : ""}`}
+                color={C.textMid}
+              />
+            </Grid>
+
+            <div style={{
+              marginTop: 12, marginBottom: 12,
+              background: `linear-gradient(135deg, ${C.card}, #0C2816)`,
+              border: `1px solid ${C.green}30`, borderLeft: `3px solid ${C.green}`,
+              borderRadius: 10, padding: "10px 14px", fontSize: 12, color: C.textMid, lineHeight: 1.6,
+            }}>
+              <strong style={{ color: C.green }}>📈 YoC Insight:</strong>{" "}
+              {yocData.useTTM
+                ? `Using trailing-12-month dividend data (${yocData.daysElapsed} days of history).`
+                : `Annualizing from ${yocData.daysElapsed} days of dividend history (need 365+ for TTM).`}
+              {" "}YoC of <strong style={{ color: "#00FF88" }}>{yocData.portfolioYoC.toFixed(2)}%</strong> means every $1 you originally invested now returns ${(yocData.portfolioYoC / 100).toFixed(3)}/year in dividends.
+              {yocData.portfolioYoC > yocData.portfolioCurrentYield + 0.5 && (
+                <> Your YoC is <strong style={{ color: C.green }}>{(yocData.portfolioYoC - yocData.portfolioCurrentYield).toFixed(2)}%</strong> above current market yield — your early purchases are paying off.</>
+              )}
+            </div>
+
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+              <YoCTable rows={yocData.rows} />
+            </div>
+
+            {/* YoC bar chart visualization */}
+            <div style={{ background: C.card, borderRadius: 12, padding: "12px 8px", border: `1px solid ${C.border}`, marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textDim, padding: "0 8px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>YoC vs Current Yield by Ticker</div>
+              <ResponsiveContainer width="100%" height={Math.max(220, yocData.rows.length * 40)}>
+                <BarChart data={yocData.rows} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} horizontal={false} />
+                  <XAxis type="number" tick={{ fill: C.textDim, fontSize: 10 }} tickFormatter={v => `${v}%`} />
+                  <YAxis type="category" dataKey="ticker" tick={{ fill: C.text, fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }} width={55} />
+                  <Tooltip
+                    formatter={(v) => `${Number(v).toFixed(2)}%`}
+                    contentStyle={{ background: C.card + "F0", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="currentYield" name="Current Yield" fill={C.cyan} radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="yoc" name="Yield on Cost" fill="#00FF88" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 32, textAlign: "center", color: C.textDim, fontSize: 13 }}>
+            No dividend history yet. Log dividends in <strong style={{ color: C.purple }}>Taxable → Dividends</strong> to activate Yield-on-Cost tracking.
+          </div>
+        )}
       </Section>
     </>
   );
@@ -1345,17 +1458,9 @@ export default function WhaleOS() {
           <Section title="Enter Monthly Income">
             <InputField label="Month (YYYY-MM)" value={form.month_year} onChange={v => setForm({ ...form, month_year: v })} />
             <Grid cols={3} gap={8}>
-              <div>
-                <InputField label="VA Disability" type="number" value={form.va} onChange={v => setForm({ ...form, va: v })} />
-              </div>
-              <div>
-                <InputField label="W-2 Gross" type="number" value={form.w2_gross} onChange={v => setForm({ ...form, w2_gross: v })} />
-                <div style={{ fontSize: 8, color: C.textDim, marginTop: -8 }}>Tổng lương chưa thuế (Dùng cho Roth)</div>
-              </div>
-              <div>
-                <InputField label="W-2 Net" type="number" value={form.w2_net} onChange={v => setForm({ ...form, w2_net: v })} />
-                <div style={{ fontSize: 8, color: C.textDim, marginTop: -8 }}>Lương thực nhận bank (Dùng cho Chi tiêu)</div>
-              </div>
+              <InputField label="VA Disability" type="number" value={form.va} onChange={v => setForm({ ...form, va: v })} step="100" min="0" />
+              <InputField label="W-2 Gross" type="number" value={form.w2_gross} onChange={v => setForm({ ...form, w2_gross: v })} step="100" min="0" />
+              <InputField label="W-2 Net" type="number" value={form.w2_net} onChange={v => setForm({ ...form, w2_net: v })} step="100" min="0" />
             </Grid>
             <Grid cols={3} gap={8}>
               <InputField label="GI Bill MHA" type="number" value={form.mha} onChange={v => setForm({ ...form, mha: v })} step="100" min="0" />
@@ -1434,12 +1539,6 @@ export default function WhaleOS() {
     const autoTotal = form.shares * form.price;
     const rothInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Roth"), [transactions, assets]);
     const rothPL = roth.total - rothInvested;
-    
-    const IRS_ANNUAL_LIMIT = 7500; // Hạn mức cứng của IRS năm 2026
-    const effectiveLimit = Math.min(ytdW2, settings.roth_limit || 7500);
-    const rothSpace = Math.max(effectiveLimit - ytdRoth, 0);
-    const rothBreached = ytdRoth > effectiveLimit;
-    const rothPct = effectiveLimit > 0 ? (ytdRoth / effectiveLimit) * 100 : 0;
 
     const { displayRows, displayTotal } = useMemo(() => {
       const filtered = rothView === "core" ? roth.rows.filter(r => r.targetWeight > 0) : roth.rows;
@@ -1632,20 +1731,6 @@ export default function WhaleOS() {
     const taxTickers = assets.filter(a => a.account_type === "Taxable").map(a => a.ticker);
     const taxInvested = useMemo(() => Quant.totalInvested(transactions, assets, "Taxable"), [transactions, assets]);
     const taxPL = taxable.total - taxInvested;
-    const [expandedDivMonths, setExpandedDivMonths] = useState(() => new Set([nowYM()]));
-
-    const toggleDivMonth = (my) => {
-      setExpandedDivMonths(prev => {
-        const next = new Set(prev);
-        if (next.has(my)) next.delete(my); else next.add(my);
-        return next;
-      });
-    };
-    const toggleAllDivs = () => {
-      const allMonths = groupedDividends.map(([my]) => my);
-      const allExpanded = allMonths.every(my => expandedDivMonths.has(my));
-      setExpandedDivMonths(allExpanded ? new Set() : new Set(allMonths));
-    };
 
     const { displayRows, displayTotal } = useMemo(() => {
       const filtered = taxView === "core" ? taxable.rows.filter(r => r.targetWeight > 0) : taxable.rows;
@@ -1931,61 +2016,48 @@ export default function WhaleOS() {
               {/* Grouped dividends by month with ticker breakdown */}
               <ScrollableHistory maxHeight={480}>
                 <div style={{ marginTop: 12 }}>
-                  {groupedDividends.length > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Dividend History</div>
-                      <button onClick={toggleAllDivs} style={{
-                        background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 12px",
-                        color: C.textMid, cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
-                      }}>
-                        {groupedDividends.every(([my]) => expandedDivMonths.has(my)) ? "▼ Collapse All" : "▶ Expand All"}
-                      </button>
-                    </div>
-                  )}
                   {groupedDividends.length > 0 ? groupedDividends.map(([monthYear, divs]) => {
                     const monthTotal = divs.reduce((s, d) => s + d.amount, 0);
+                    // Ticker breakdown for this month
                     const tickerTotals = {};
                     divs.forEach(d => {
                       if (!tickerTotals[d.ticker]) tickerTotals[d.ticker] = 0;
                       tickerTotals[d.ticker] += d.amount;
                     });
-                    const isExpanded = expandedDivMonths.has(monthYear);
                     return (
                       <div key={monthYear} style={{ marginBottom: 14 }}>
-                        <div 
-                          onClick={() => toggleDivMonth(monthYear)}
-                          style={{
-                            background: `${C.green}10`, padding: "6px 12px", borderRadius: isExpanded ? "8px 8px 0 0" : 8,
-                            borderLeft: `3px solid ${C.green}`, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"
-                          }}>
+                        <div style={{
+                          background: `${C.green}10`, padding: "6px 12px", borderRadius: "8px 8px 0 0",
+                          borderLeft: `3px solid ${C.green}`, display: "flex", justifyContent: "space-between", alignItems: "center",
+                        }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 10, transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", color: C.green }}>▶</span>
                             <span style={{ fontSize: 11, fontWeight: 800, color: C.green }}>💰 {monthYear}</span>
                             <span style={{ fontSize: 9, color: C.textDim }}>{divs.length} DIVIDEND{divs.length !== 1 ? "S" : ""}</span>
                           </div>
                           <span style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(monthTotal, 0)}</span>
                         </div>
-                        {isExpanded && (
-                          <>
-                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "4px 10px", background: C.cardAlt, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
-                              {Object.entries(tickerTotals).map(([ticker, amt]) => (
-                                <span key={ticker} style={{ fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", padding: "2px 6px", borderRadius: 4, background: `${C.green}10`, color: C.green, border: `1px solid ${C.green}20` }}>
-                                  {ticker}: +${fmt(amt, 0)}
-                                </span>
-                              ))}
+                        {/* Ticker summary pills */}
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "4px 10px", background: C.cardAlt, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>
+                          {Object.entries(tickerTotals).map(([ticker, amt]) => (
+                            <span key={ticker} style={{
+                              fontSize: 9, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                              padding: "2px 6px", borderRadius: 4, background: `${C.green}10`, color: C.green,
+                              border: `1px solid ${C.green}20`,
+                            }}>
+                              {ticker}: +${fmt(amt, 0)}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
+                          {[...divs].sort((a, b) => b.date.localeCompare(a.date)).map(d => (
+                            <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
+                              <span style={{ color: C.textDim }}>{d.date}</span>
+                              <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
+                              <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
+                              <button onClick={() => deleteDividend(d.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
                             </div>
-                            <div style={{ border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 4 }}>
-                              {[...divs].sort((a, b) => b.date.localeCompare(a.date)).map(d => (
-                                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}40` }}>
-                                  <span style={{ color: C.textDim }}>{d.date}</span>
-                                  <span style={{ fontWeight: 700, color: C.cyan }}>{d.ticker}</span>
-                                  <span style={{ fontWeight: 700, color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>+${fmt(d.amount)}</span>
-                                  <button onClick={(e) => { e.stopPropagation(); deleteDividend(d.id); }} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", opacity: 0.6, fontSize: 14 }}>🗑</button>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        )}
+                          ))}
+                        </div>
                       </div>
                     );
                   }) : (
@@ -2180,7 +2252,7 @@ export default function WhaleOS() {
 
         <Section title="🗺️ Market Heatmap">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-            <TabBar tabs={[{ id: "mag7", icon: "💎", label: "Mag 7" }, { id: "sectors", icon: "🏗️", label: "Sectors" }]} active={heatView} onChange={setHeatView} />
+            <TabBar tabs={[{ id: "mag7", icon: "💎", label: "Magnificent 7" }, { id: "sectors", icon: "🏗️", label: "Sectors" }]} active={heatView} onChange={setHeatView} />
             <div style={{ display: "inline-flex", gap: 2, background: C.card, borderRadius: 8, padding: 2 }}>
               {["1d", "1w"].map(p => (
                 <button key={p} onClick={() => setHeatPeriod(p)} style={{
@@ -2273,13 +2345,6 @@ export default function WhaleOS() {
           <InputField label="Target NAV ($)" type="number" value={s.target_nav} onChange={v => setS({ ...s, target_nav: v })} step="10000" />
           <InputField label="Monthly Expenses ($)" type="number" value={s.monthly_expenses} onChange={v => setS({ ...s, monthly_expenses: v })} step="100" />
           <InputField label="Expected Annual Return" type="number" value={s.expected_annual_return} onChange={v => setS({ ...s, expected_annual_return: v })} step="0.01" />
-          <InputField 
-            label="IRS Roth Annual Limit ($)" 
-            type="number" 
-            value={s.roth_limit || 7500} 
-            onChange={v => setS({ ...s, roth_limit: v })} 
-            step="500" 
-          />
           <Btn onClick={saveSettings} full>Save Settings</Btn>
         </Section>
         <Section title="🏛️ Fed Tracker (Manual)">
@@ -2328,12 +2393,12 @@ export default function WhaleOS() {
   //  NAVIGATION
   // ═══════════════════════════════════════════════════════════
   const NAV_ITEMS = [
-    { id: "dashboard", icon: "🐳", label: "Dashboard" },
-    { id: "cashflow", icon: "🫏", label: "Cashflow" },
+    { id: "dashboard", icon: "🎯", label: "Dashboard" },
+    { id: "cashflow", icon: "💰", label: "Cashflow" },
     { id: "roth", icon: "🛡️", label: "Roth" },
-    { id: "taxable", icon: "🐦‍🔥", label: "Taxable" },
-    { id: "strategy", icon: "🧮", label: "Strategy" },
-    { id: "market", icon: "🛰", label: "Market" },
+    { id: "taxable", icon: "⚙️", label: "Taxable" },
+    { id: "strategy", icon: "🔬", label: "Strategy" },
+    { id: "market", icon: "🌐", label: "Market" },
   ];
 
   const renderPage = () => {
@@ -2358,30 +2423,13 @@ export default function WhaleOS() {
         ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
         input[type="range"] { height: 4px; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @media (max-width: 768px) {
-          .whale-grid-3, .whale-grid-4 { 
-            grid-template-columns: repeat(2, 1fr) !important; 
-          }
-        }
-        @media (max-width: 480px) {
-          .whale-grid-2, .whale-grid-3, .whale-grid-4 { 
-            grid-template-columns: 1fr !important; 
-          }
-          /* Chỉnh lại font size tiêu đề cho điện thoại nhỏ */
-          h2 { font-size: 18px !important; }
+        @media (max-width: 640px) {
+          .whale-grid-3 { grid-template-columns: 1fr !important; }
         }
       `}</style>
 
       {/* HEADER */}
-        <header style={{ 
-          position: "sticky", top: 0, zIndex: 100, 
-          background: C.bg + "E8", backdropFilter: "blur(12px)", 
-          borderBottom: `1px solid ${C.border}`, 
-          // Thêm padding-left/right để tránh viền iPhone
-          padding: "10px max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left))", 
-          display: "flex", alignItems: "center", justifyContent: "space-between", 
-          width: "100%" 
-        }}>
+      <header style={{ position: "sticky", top: 0, zIndex: 100, background: C.bg + "E8", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 28 }}>🐋</span>
           <div>
@@ -2416,12 +2464,7 @@ export default function WhaleOS() {
       )}
 
       {/* MAIN CONTENT */}
-      <main style={{ 
-        // Padding đáy 90px để tránh đè Bottom Nav, padding 2 bên tự dãn theo Safe Area của iPhone
-        padding: "16px max(16px, env(safe-area-inset-right)) 120px max(16px, env(safe-area-inset-left))", 
-        maxWidth: 1800, 
-        margin: "0 auto" 
-      }}>
+      <main style={{ padding: "16px 16px 90px 16px", maxWidth: 1100, margin: "0 auto" }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, color: C.text }}>
           {NAV_ITEMS.find(n => n.id === page)?.icon} {NAV_ITEMS.find(n => n.id === page)?.label}
         </h2>
@@ -2429,13 +2472,13 @@ export default function WhaleOS() {
       </main>
 
       {/* BOTTOM NAVIGATION */}
-      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.bg + "F5", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", padding: "6px max(0px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left))", zIndex: 100 }}>
+      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.bg + "F5", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", padding: "6px 0 max(6px, env(safe-area-inset-bottom))", zIndex: 100 }}>
         {NAV_ITEMS.map(n => (
           <button key={n.id} onClick={() => setPage(n.id)} style={{
             background: "none", border: "none", cursor: "pointer", padding: "4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
             color: page === n.id ? C.cyan : C.textDim, transition: "color 0.2s", minWidth: 0, flex: 1,
           }}>
-            <span style={{ fontSize: 24, marginBottom: 2 }}>{n.icon}</span>
+            <span style={{ fontSize: 18 }}>{n.icon}</span>
             <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.02em" }}>{n.label}</span>
             {page === n.id && <div style={{ width: 16, height: 2, borderRadius: 1, background: C.cyan, marginTop: 1 }} />}
           </button>
