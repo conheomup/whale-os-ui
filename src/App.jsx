@@ -318,19 +318,18 @@ const Quant = {
 // ═══════════════════════════════════════════════════════════════
 const C = {
   bg: "#000000",
-  card: "#0A0F1A",      // Tối hơn một chút để êm mắt
-  cardAlt: "#111827",
-  border: "#1F2937",    // Giảm độ sáng của viền
-  borderLight: "#374151",
+  card: "#0A101E",      // Dịu mắt hơn
+  cardAlt: "#121A2B",
+  border: "#1E293B",    // Viền bớt chói
+  borderLight: "#334155",
   cyan: "#00D4FF",
-  cyanDim: "#0891b2",
   purple: "#8B5CF6",
-  text: "#E2E8F0",      // Màu xám trắng dịu (không phải trắng tinh)
-  textDim: "#6B7280",   // Màu xám tối cho các nhãn
-  textMid: "#9CA3AF",   // Màu xám vừa cho thông tin phụ
-  red: "#EF4444", 
-  green: "#22C55E", 
   amber: "#F59E0B",
+  red: "#EF4444", 
+  green: "#22C55E",
+  text: "#CBD5E1",      // Màu xám trắng (không chói như trắng tinh)
+  textDim: "#64748B",   // Nhãn mờ
+  textMid: "#94A3B8",
 };
 const DONUT_COLORS = ["#00D4FF", "#8B5CF6", "#F59E0B", "#22C55E", "#EC4899", "#F97316", "#06B6D4", "#A78BFA"];
 const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -818,11 +817,11 @@ const TreemapContent = ({ x, y, width, height, name, change, price }) => {
 //  VIX LABEL HELPER
 // ═══════════════════════════════════════════════════════════════
 function vixLabel(v) {
-  if (v > 30) return ["Extreme Fear", "#EF4444"]; // Dùng mã màu HEX trực tiếp cho chắc chắn
-  if (v > 25) return ["Fear", "#F59E0B"];
-  if (v > 20) return ["Bearish", "#FB923C"];
-  if (v > 15) return ["Neutral", "#94A3B8"];
-  return ["Optimistic", "#22C55E"];
+  if (v > 30) return ["Extreme Fear", "#EF4444"]; // Red
+  if (v > 25) return ["Fear", "#F97316"];       // Orange
+  if (v > 20) return ["Bearish", "#F59E0B"];    // Amber
+  if (v > 15) return ["Neutral", "#94A3B8"];    // Gray
+  return ["Optimistic", "#22C55E"];             // Green
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1058,12 +1057,6 @@ export default function WhaleOS() {
   const ytdRoth = useMemo(() => Quant.ytdRothContributions(transactions, assets, year), [transactions, assets, year]);
   const rothSpace = Math.max(ytdW2 - ytdRoth, 0);
   const rothBreached = ytdRoth > ytdW2 && ytdW2 > 0;
-  const rothPct = useMemo(() => {
-  const w2 = parseFloat(ytdW2) || 0;
-  const roth = parseFloat(ytdRoth) || 0;
-  if (w2 <= 0) return roth > 0 ? 100 : 0;
-  return Math.min((roth / w2) * 100, 200); // Giới hạn max 200% để tránh lỗi CSS
-  }, [ytdW2, ytdRoth]);
   const avgSurplus = useMemo(() => {
     if (!incomes.length) return 0;
     const surps = incomes.map(i => Quant.netSurplus(i, settings.monthly_expenses));
