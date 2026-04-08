@@ -317,14 +317,20 @@ const Quant = {
 //  THEME & CONSTANTS — TRUE BLACK OLED
 // ═══════════════════════════════════════════════════════════════
 const C = {
-  bg: "#000000", 
-  card: "#0C1425",      // Sáng hơn một chút so với #080E1A
-  cardAlt: "#141D2E",   // Rõ ràng hơn để phân biệt các ô
-  border: "#26354D",    // Viền nổi bật hơn hẳn bản cũ
-  borderLight: "#334461",
-  text: "#F8FAFC",      // Trắng sứ để nhìn cực rõ
-  textDim: "#94A3B8",   // Tăng từ #64748B lên để các nhãn (labels) rõ nét
-  textMid: "#CBD5E1",
+  bg: "#000000",
+  card: "#0A0F1A",      // Tối hơn một chút để êm mắt
+  cardAlt: "#111827",
+  border: "#1F2937",    // Giảm độ sáng của viền
+  borderLight: "#374151",
+  cyan: "#00D4FF",
+  cyanDim: "#0891b2",
+  purple: "#8B5CF6",
+  text: "#E2E8F0",      // Màu xám trắng dịu (không phải trắng tinh)
+  textDim: "#6B7280",   // Màu xám tối cho các nhãn
+  textMid: "#9CA3AF",   // Màu xám vừa cho thông tin phụ
+  red: "#EF4444", 
+  green: "#22C55E", 
+  amber: "#F59E0B",
 };
 const DONUT_COLORS = ["#00D4FF", "#8B5CF6", "#F59E0B", "#22C55E", "#EC4899", "#F97316", "#06B6D4", "#A78BFA"];
 const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -812,11 +818,11 @@ const TreemapContent = ({ x, y, width, height, name, change, price }) => {
 //  VIX LABEL HELPER
 // ═══════════════════════════════════════════════════════════════
 function vixLabel(v) {
-  if (v > 30) return ["Extreme Fear", C.red];
-  if (v > 25) return ["Fear", "#FB923C"];
-  if (v > 20) return ["Bearish", C.amber];
-  if (v > 15) return ["Neutral", C.textMid];
-  return ["Optimistic", C.green];
+  if (v > 30) return ["Extreme Fear", "#EF4444"]; // Dùng mã màu HEX trực tiếp cho chắc chắn
+  if (v > 25) return ["Fear", "#F59E0B"];
+  if (v > 20) return ["Bearish", "#FB923C"];
+  if (v > 15) return ["Neutral", "#94A3B8"];
+  return ["Optimistic", "#22C55E"];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -845,7 +851,14 @@ function CloudBadge({ status }) {
 export default function WhaleOS() {
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("dashboard");
-  const [settings, setSettings] = useState({ target_nav: 200000, monthly_expenses: 1500, expected_annual_return: 0.10, fed_next_meeting: "2026-06-18", fed_prob_hold: 62, fed_prob_cut: 33, fed_prob_hike: 5 });
+  
+  const [settings, setSettings] = useState({ 
+  target_nav: 200000, 
+  monthly_expenses: 1500, 
+  expected_annual_return: 0.10,
+  roth_limit: 7500 // Thêm hạn mức này
+  });
+
   const [incomes, setIncomes] = useState([]);
   const [assets, setAssets] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -1123,10 +1136,18 @@ export default function WhaleOS() {
       <Section title="🎭 Market Sentiment">
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
           <div style={{ flex: "1 1 180px", minWidth: 160 }}>
-            <SvgGauge value={vixData.current} max={50} label={vlbl} subLabel="VIX Short-term" thresholds={[
-              { from: 0, to: 0.3, color: C.green }, { from: 0.3, to: 0.4, color: "#84CC16" },
-              { from: 0.4, to: 0.5, color: C.amber }, { from: 0.5, to: 1, color: C.red },
-            ]} />
+            <SvgGauge 
+              value={vixData.current} 
+              max={50} 
+              label={vlbl} 
+              subLabel="VIX Short-term" 
+              thresholds={[
+                { from: 0, to: 0.3, color: "#22C55E" }, 
+                { from: 0.3, to: 0.4, color: "#84CC16" },
+                { from: 0.4, to: 0.5, color: "#F59E0B" }, 
+                { from: 0.5, to: 1, color: "#EF4444" },
+              ]} 
+            />
           </div>
           <div style={{ flex: "1 1 180px", minWidth: 160 }}>
             <SvgGauge value={vixData.midTerm} max={50} label={vixLabel(vixData.midTerm)[0]} subLabel="VIX Mid-term" thresholds={[
@@ -1330,9 +1351,17 @@ export default function WhaleOS() {
           <Section title="Enter Monthly Income">
             <InputField label="Month (YYYY-MM)" value={form.month_year} onChange={v => setForm({ ...form, month_year: v })} />
             <Grid cols={3} gap={8}>
-              <InputField label="VA Disability" type="number" value={form.va} onChange={v => setForm({ ...form, va: v })} step="100" min="0" />
-              <InputField label="W-2 Gross" type="number" value={form.w2_gross} onChange={v => setForm({ ...form, w2_gross: v })} step="100" min="0" />
-              <InputField label="W-2 Net" type="number" value={form.w2_net} onChange={v => setForm({ ...form, w2_net: v })} step="100" min="0" />
+              <div>
+                <InputField label="VA Disability" type="number" value={form.va} onChange={v => setForm({ ...form, va: v })} />
+              </div>
+              <div>
+                <InputField label="W-2 Gross" type="number" value={form.w2_gross} onChange={v => setForm({ ...form, w2_gross: v })} />
+                <div style={{ fontSize: 8, color: C.textDim, marginTop: -8 }}>Tổng lương chưa thuế (Dùng cho Roth)</div>
+              </div>
+              <div>
+                <InputField label="W-2 Net" type="number" value={form.w2_net} onChange={v => setForm({ ...form, w2_net: v })} />
+                <div style={{ fontSize: 8, color: C.textDim, marginTop: -8 }}>Lương thực nhận bank (Dùng cho Chi tiêu)</div>
+              </div>
             </Grid>
             <Grid cols={3} gap={8}>
               <InputField label="GI Bill MHA" type="number" value={form.mha} onChange={v => setForm({ ...form, mha: v })} step="100" min="0" />
@@ -1413,10 +1442,10 @@ export default function WhaleOS() {
     const rothPL = roth.total - rothInvested;
     
     const IRS_ANNUAL_LIMIT = 7500; // Hạn mức cứng của IRS năm 2026
-    const effectiveLimit = Math.min(ytdW2, IRS_ANNUAL_LIMIT);
+    const effectiveLimit = Math.min(ytdW2, settings.roth_limit || 7500);
     const rothSpace = Math.max(effectiveLimit - ytdRoth, 0);
     const rothBreached = ytdRoth > effectiveLimit;
-    const rothPct = effectiveLimit > 0 ? (ytdRoth / effectiveLimit) * 100 : (ytdRoth > 0 ? 100 : 0);
+    const rothPct = effectiveLimit > 0 ? (ytdRoth / effectiveLimit) * 100 : 0;
 
     const { displayRows, displayTotal } = useMemo(() => {
       const filtered = rothView === "core" ? roth.rows.filter(r => r.targetWeight > 0) : roth.rows;
@@ -2250,6 +2279,13 @@ export default function WhaleOS() {
           <InputField label="Target NAV ($)" type="number" value={s.target_nav} onChange={v => setS({ ...s, target_nav: v })} step="10000" />
           <InputField label="Monthly Expenses ($)" type="number" value={s.monthly_expenses} onChange={v => setS({ ...s, monthly_expenses: v })} step="100" />
           <InputField label="Expected Annual Return" type="number" value={s.expected_annual_return} onChange={v => setS({ ...s, expected_annual_return: v })} step="0.01" />
+          <InputField 
+            label="IRS Roth Annual Limit ($)" 
+            type="number" 
+            value={s.roth_limit || 7500} 
+            onChange={v => setS({ ...s, roth_limit: v })} 
+            step="500" 
+          />
           <Btn onClick={saveSettings} full>Save Settings</Btn>
         </Section>
         <Section title="🏛️ Fed Tracker (Manual)">
