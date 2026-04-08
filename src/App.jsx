@@ -290,7 +290,8 @@ const Quant = {
       rows.push({ ticker: t, shares: netShares, price, value, cost: costBasis, pl, targetWeight: a.target_weight });
     }
     const total = rows.reduce((s, r) => s + r.value, 0);
-    if (total > 0) rows = rows.map(r => ({ ...r, weight: (r.value / total) * 100 }));
+    // Luôn luôn tạo biến weight, nếu total = 0 thì set weight = 0
+    rows = rows.map(r => ({ ...r, weight: total > 0 ? (r.value / total) * 100 : 0 }));
     return { rows, total };
   },
   ytdW2Gross(incomes, year) {
