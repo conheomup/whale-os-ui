@@ -933,6 +933,7 @@ export default function WhaleOS() {
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("dashboard");
   const [settings, setSettings] = useState({ target_nav: 200000, monthly_expenses: 1500, expected_annual_return: 0.10, fed_next_meeting: "2026-06-18", fed_prob_hold: 62, fed_prob_cut: 33, fed_prob_hike: 5, yield_overrides: {} });
+  const [incomes, setIncomes] = useState([]);
   const [assets, setAssets] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [sbloc, setSbloc] = useState([]);
