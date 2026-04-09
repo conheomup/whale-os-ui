@@ -908,7 +908,7 @@ function vixLabel(v) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ASYMMETRIC DCA SIMULATOR (VIX BẤT ĐỐI XỨNG - CUSTOM PLAN)
+//  ASYMMETRIC DCA SIMULATOR (VIX BẤT ĐỐI XỨNG - CƠ CHẾ DÒNG TIỀN)
 // ═══════════════════════════════════════════════════════════════
 function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
   const [simVix, setSimVix] = useState(currentVix);
@@ -920,34 +920,56 @@ function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
   let spyiAmt = 0, schgAmt = 0, toReserve = 0, fromReserve = 0;
   let mode = "", modeColor = C.cyan;
 
+  // 🚀 NGƯỠNG KÍCH HOẠT DÒNG CHẢY THẶNG DƯ
+  const SURPLUS_THRESHOLD = 2000;
+
   if (simVix < 20) {
     mode = "🛡️ XÂY KHIÊN & TÍCH ĐẠN"; modeColor = C.cyan;
     spyiAmt = weeklyBudget * 0.8;
     toReserve = weeklyBudget * 0.2;
+    
+    // 💡 NẾU QUỸ > $2000: Xả bớt 5% quỹ vào SPYI để lấy cổ tức ngay
+    if (cashReserve > SURPLUS_THRESHOLD) {
+      const extra = cashReserve * 0.05;
+      spyiAmt += extra;
+      fromReserve = extra;
+    }
   } else if (simVix <= 24) {
     mode = "⚖️ DCA CÂN BẰNG"; modeColor = C.amber;
     spyiAmt = weeklyBudget * 0.6;
     schgAmt = weeklyBudget * 0.4;
+
+    // Vẫn áp dụng xả quỹ vào SPYI ở vùng cân bằng nếu quỹ quá đầy
+    if (cashReserve > SURPLUS_THRESHOLD) {
+      const extra = cashReserve * 0.05;
+      spyiAmt += extra;
+      fromReserve = extra;
+    }
   } else if (simVix <= 28) {
     mode = "⚠️ BẮT ĐÁY NHẸ"; modeColor = "#F97316"; 
     spyiAmt = weeklyBudget * 0.2;
-    schgAmt = weeklyBudget * 0.8 + (cashReserve * 0.3); // Mở khóa 30% kho đạn
-    fromReserve = cashReserve * 0.3;
+    fromReserve = cashReserve * 0.3; // Rút 30% quỹ đi săn
+    schgAmt = weeklyBudget * 0.8 + fromReserve;
   } else {
     mode = "🔥 HỐT XÁC (ALL-IN SCHG)"; modeColor = C.red;
-    schgAmt = weeklyBudget + cashReserve;               // Mở khóa 100% kho đạn
-    fromReserve = cashReserve;
+    fromReserve = cashReserve; // Rút sạch quỹ
+    schgAmt = weeklyBudget + fromReserve;
   }
 
   const totalDeployed = spyiAmt + schgAmt;
-  const finalReserve = cashReserve + toReserve - fromReserve;
+  const netReserveChange = toReserve - fromReserve;
+  const finalReserve = cashReserve + netReserveChange;
 
   return (
     <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px 20px", marginTop: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Chiến Thuật DCA Bất Đối Xứng (Weekly)</div>
-          <div style={{ fontSize: 11, color: C.textDim, maxWidth: 300 }}>Thuật toán tự động tính tỷ trọng giải ngân và tích lũy đạn dựa vào mức độ sợ hãi của thị trường.</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>DCA Bất Đối Xứng (Ưu tiên Dòng tiền)</div>
+          <div style={{ fontSize: 11, color: C.textDim, maxWidth: 350 }}>
+            {cashReserve > SURPLUS_THRESHOLD && simVix < 24 
+              ? `🔥 Đang xả bớt 5% quỹ thặng dư ($${fmt(fromReserve, 0)}) vào SPYI để tối ưu cổ tức.`
+              : "Hệ thống tự động điều phối đạn dược dựa trên biến động thị trường."}
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 10, fontWeight: 700, background: `${modeColor}15`, color: modeColor, padding: "6px 12px", borderRadius: 8, border: `1px solid ${modeColor}40`, letterSpacing: "0.05em" }}>
@@ -961,20 +983,24 @@ function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
           <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", marginBottom: 4 }}>Tổng giải ngân tuần</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalDeployed, 0)}</div>
         </div>
-        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.cyan}40` }}>
           <div style={{ fontSize: 9, color: C.cyan, textTransform: "uppercase", marginBottom: 4 }}>Vào SPYI (Income)</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(spyiAmt, 0)}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
+            ${fmt(spyiAmt, 0)}
+            {fromReserve > 0 && simVix < 24 && <span style={{fontSize: 9, color: C.green, marginLeft: 4}}>+${fmt(fromReserve, 0)}</span>}
+          </div>
         </div>
         <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
           <div style={{ fontSize: 9, color: C.green, textTransform: "uppercase", marginBottom: 4 }}>Vào SCHG (Growth)</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(schgAmt, 0)}</div>
         </div>
-        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${toReserve > 0 ? C.purple : fromReserve > 0 ? C.red : C.borderLight}` }}>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${netReserveChange >= 0 ? C.purple : C.red}40` }}>
           <div style={{ fontSize: 9, color: C.purple, textTransform: "uppercase", marginBottom: 4 }}>Quỹ bắn tỉa (USFR)</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
             ${fmt(finalReserve, 0)}
-            {toReserve > 0 && <span style={{ fontSize: 10, color: C.purple, marginLeft: 4 }}>+{fmt(toReserve, 0)}</span>}
-            {fromReserve > 0 && <span style={{ fontSize: 10, color: C.red, marginLeft: 4 }}>-{fmt(fromReserve, 0)}</span>}
+            <span style={{ fontSize: 10, color: netReserveChange >= 0 ? C.purple : C.red, marginLeft: 4 }}>
+              {netReserveChange >= 0 ? "+" : ""}{fmt(netReserveChange, 0)}
+            </span>
           </div>
         </div>
       </Grid>
@@ -987,7 +1013,6 @@ function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
           <input type="range" min="10" max="50" step="0.5" value={simVix} onChange={e => setSimVix(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.amber, cursor: "pointer" }} />
         </div>
         
-        {/* 🚀 ĐÃ THÊM Ô NHẬP SỐ TIỀN THỦ CÔNG */}
         <div style={{ flex: "1 1 200px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>
             <span>Đạn sẵn sàng (Quỹ)</span>
@@ -1002,7 +1027,7 @@ function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
               />
             </div>
           </div>
-          <input type="range" min="0" max="5000" step="50" value={cashReserve} onChange={e => setCashReserve(parseFloat(e.target.value) || 0)} style={{ width: "100%", accentColor: C.purple, cursor: "pointer", marginTop: 4 }} />
+          <input type="range" min="0" max="10000" step="100" value={cashReserve} onChange={e => setCashReserve(parseFloat(e.target.value) || 0)} style={{ width: "100%", accentColor: C.purple, cursor: "pointer", marginTop: 4 }} />
         </div>
       </div>
     </div>
