@@ -913,30 +913,29 @@ function vixLabel(v) {
 function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
   const [simVix, setSimVix] = useState(currentVix);
   const [weeklyBudget, setWeeklyBudget] = useState(Math.round(defaultDca / 4));
-  const [cashReserve, setCashReserve] = useState(500); // Quỹ bắn tỉa giả định có sẵn $500
+  const [cashReserve, setCashReserve] = useState(500);
 
   useEffect(() => { setSimVix(currentVix); }, [currentVix]);
 
   let spyiAmt = 0, schgAmt = 0, toReserve = 0, fromReserve = 0;
   let mode = "", modeColor = C.cyan;
 
-  // 🚀 LOGIC ĐÃ ĐƯỢC CHỈNH SỬA THEO ĐÚNG ORIGINAL PLAN CỦA BẠN
   if (simVix < 20) {
     mode = "🛡️ XÂY KHIÊN & TÍCH ĐẠN"; modeColor = C.cyan;
-    spyiAmt = weeklyBudget * 0.8;   // Ưu tiên 80% SPYI
-    toReserve = weeklyBudget * 0.2; // Cất 20% vào quỹ chờ thời (0% SCHG)
+    spyiAmt = weeklyBudget * 0.8;
+    toReserve = weeklyBudget * 0.2;
   } else if (simVix <= 24) {
     mode = "⚖️ DCA CÂN BẰNG"; modeColor = C.amber;
-    spyiAmt = weeklyBudget * 0.6;   // Theo plan gốc: 60% SPYI
-    schgAmt = weeklyBudget * 0.4;   // Theo plan gốc: 40% SCHG
+    spyiAmt = weeklyBudget * 0.6;
+    schgAmt = weeklyBudget * 0.4;
   } else if (simVix <= 28) {
     mode = "⚠️ BẮT ĐÁY NHẸ"; modeColor = "#F97316"; 
     spyiAmt = weeklyBudget * 0.2;
-    schgAmt = weeklyBudget * 0.8 + (cashReserve * 0.3);
+    schgAmt = weeklyBudget * 0.8 + (cashReserve * 0.3); // Mở khóa 30% kho đạn
     fromReserve = cashReserve * 0.3;
   } else {
     mode = "🔥 HỐT XÁC (ALL-IN SCHG)"; modeColor = C.red;
-    schgAmt = weeklyBudget + cashReserve;
+    schgAmt = weeklyBudget + cashReserve;               // Mở khóa 100% kho đạn
     fromReserve = cashReserve;
   }
 
@@ -987,11 +986,23 @@ function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
           </div>
           <input type="range" min="10" max="50" step="0.5" value={simVix} onChange={e => setSimVix(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.amber, cursor: "pointer" }} />
         </div>
+        
+        {/* 🚀 ĐÃ THÊM Ô NHẬP SỐ TIỀN THỦ CÔNG */}
         <div style={{ flex: "1 1 200px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>
-            <span>Đạn sẵn sàng (Quỹ Bắn Tỉa)</span><span style={{ color: C.purple, fontWeight: 700 }}>${fmt(cashReserve, 0)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>
+            <span>Đạn sẵn sàng (Quỹ)</span>
+            <div style={{ display: "flex", alignItems: "center", background: C.cardAlt, border: `1px solid ${C.purple}50`, borderRadius: 6, padding: "2px 6px" }}>
+              <span style={{ color: C.purple, fontWeight: 700, marginRight: 2 }}>$</span>
+              <input 
+                type="number" 
+                value={cashReserve === 0 ? "" : cashReserve} 
+                onChange={e => setCashReserve(parseFloat(e.target.value) || 0)} 
+                style={{ width: 60, border: "none", background: "transparent", color: C.purple, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", outline: "none", fontSize: 12, padding: 0 }} 
+                placeholder="0"
+              />
+            </div>
           </div>
-          <input type="range" min="0" max="3000" step="100" value={cashReserve} onChange={e => setCashReserve(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.purple, cursor: "pointer" }} />
+          <input type="range" min="0" max="5000" step="50" value={cashReserve} onChange={e => setCashReserve(parseFloat(e.target.value) || 0)} style={{ width: "100%", accentColor: C.purple, cursor: "pointer", marginTop: 4 }} />
         </div>
       </div>
     </div>
