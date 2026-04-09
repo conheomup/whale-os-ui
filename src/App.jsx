@@ -407,8 +407,8 @@ const currentYear = () => String(new Date().getFullYear());
 function MetricCard({ label, value, sub, color = C.cyan, large }) {
   // Cảm biến màn hình Mobile để tự động thu nhỏ font chữ và padding
   const isMobile = window.innerWidth < 500;
-  const valFontSize = large ? (isMobile ? 22 : 28) : (isMobile ? 18 : 22);
-  const cardPadding = large ? (isMobile ? "14px 16px" : "20px 24px") : "14px 16px";
+  const valFontSize = large ? (isMobile ? 20 : 26) : (isMobile ? 18 : 22);
+  const cardPadding = large ? (isMobile ? "12px 14px" : "20px 24px") : "12px 14px";
 
   return (
     <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: cardPadding, flex: 1, minWidth: 0 }}>
@@ -419,13 +419,14 @@ function MetricCard({ label, value, sub, color = C.cyan, large }) {
         color, 
         fontFamily: "'IBM Plex Mono', monospace", 
         marginTop: 4, 
-        // Đã xóa nowrap/ellipsis. Thêm wordBreak để cho phép số dài tự rớt xuống hàng
-        wordBreak: "break-word",
-        lineHeight: 1.2
+        whiteSpace: "nowrap",       // Cấm rớt dòng đối với các con số
+        letterSpacing: "-0.04em",   // Ép các chữ số lại gần nhau 1 xíu để tiết kiệm diện tích
+        overflow: "hidden",
+        textOverflow: "ellipsis"
       }}>
         {value}
       </div>
-      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
     </div>
   );
 }
@@ -679,7 +680,10 @@ function PortfolioTable({ rows, accentColor = C.cyan, showTarget = false }) {
 }
 
 function Grid({ children, cols = 3, gap = 12 }) {
-  return <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap }}>{children}</div>;
+  // Mobile thông minh: Tự động chia lại thành các cột rộng tối thiểu 140px. 
+  // Trên iPhone, nó sẽ rớt xuống thành 2 cột rất rộng rãi và đẹp mắt.
+  const minW = cols >= 4 ? "140px" : "150px";
+  return <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${minW}), 1fr))`, gap }}>{children}</div>;
 }
 
 // ═══════════════════════════════════════════════════════════════
