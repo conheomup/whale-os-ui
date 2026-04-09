@@ -932,8 +932,7 @@ function CloudBadge({ status }) {
 export default function WhaleOS() {
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("dashboard");
-  const [settings, setSettings] = useState({ target_nav: 200000, monthly_expenses: 1500, expected_annual_return: 0.10, fed_next_meeting: "2026-06-18", fed_prob_hold: 62, fed_prob_cut: 33, fed_prob_hike: 5 });
-  const [incomes, setIncomes] = useState([]);
+  const [settings, setSettings] = useState({ target_nav: 200000, monthly_expenses: 1500, expected_annual_return: 0.10, fed_next_meeting: "2026-06-18", fed_prob_hold: 62, fed_prob_cut: 33, fed_prob_hike: 5, yield_overrides: {} });
   const [assets, setAssets] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [sbloc, setSbloc] = useState([]);
@@ -1054,14 +1053,10 @@ export default function WhaleOS() {
     const p = await DB.getPrices();
     if (s) {
       setSettings({
-        target_nav: s.target_nav ?? 200000, 
-        monthly_expenses: s.monthly_expenses ?? 1500,
-        expected_annual_return: s.expected_annual_return ?? 0.10, 
-        fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
-        fed_prob_hold: s.fed_prob_hold ?? 62, 
-        fed_prob_cut: s.fed_prob_cut ?? 33, 
-        fed_prob_hike: s.fed_prob_hike ?? 5,
-        yield_overrides: s.yield_overrides || {}, // 💡 THÊM DÒNG NÀY
+        target_nav: s.target_nav ?? 200000, monthly_expenses: s.monthly_expenses ?? 1500,
+        expected_annual_return: s.expected_annual_return ?? 0.10, fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
+        fed_prob_hold: s.fed_prob_hold ?? 62, fed_prob_cut: s.fed_prob_cut ?? 33, fed_prob_hike: s.fed_prob_hike ?? 5,
+        yield_overrides: s.yield_overrides || {}, // 💡 DÒNG BỊ THIẾU NẰM Ở ĐÂY NÈ
       });
     }
     if (i) setIncomes(i);
@@ -2324,19 +2319,31 @@ export default function WhaleOS() {
     const [overrideTicker, setOverrideTicker] = useState("");
     const [overrideValue, setOverrideValue] = useState("");
 
-    const addOverride = () => {
+    // 🚀 Đã nâng cấp: Bấm Add là lưu thẳng vào Database Supabase luôn!
+    const addOverride = async () => {
       if (!overrideTicker || overrideValue === "") return;
       const t = overrideTicker.toUpperCase().trim();
       const updatedOverrides = { ...(s.yield_overrides || {}), [t]: parseFloat(overrideValue) };
-      setS({ ...s, yield_overrides: updatedOverrides });
+      
+      const newSettings = { ...s, yield_overrides: updatedOverrides };
+      setS(newSettings);         // Update UI Settings
+      setSettings(newSettings);  // Update Global App
+      await save("settings", newSettings); // Lưu thẳng vào Database!
+      
       setOverrideTicker("");
       setOverrideValue("");
+      flash(`Saved override: ${t} = ${overrideValue}%`);
     };
 
-    const removeOverride = (t) => {
+    const removeOverride = async (t) => {
       const updatedOverrides = { ...(s.yield_overrides || {}) };
       delete updatedOverrides[t];
-      setS({ ...s, yield_overrides: updatedOverrides });
+      
+      const newSettings = { ...s, yield_overrides: updatedOverrides };
+      setS(newSettings);
+      setSettings(newSettings);
+      await save("settings", newSettings);
+      flash(`Removed override for ${t}`, "amber");
     };
 
     const saveSettings = async () => {
