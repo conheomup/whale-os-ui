@@ -349,10 +349,14 @@ yieldOnCost(transactions, dividends, assets, prices) {
       const shares = costInfo[ticker].shares;
       if (cost <= 0 || shares <= 0.001) return;
 
-      // Lấy Forward Dividend Rate từ Backend
       const priceData = prices[ticker];
       const currentPrice = typeof priceData === "object" ? (priceData.price || 0) : (parseFloat(priceData) || 0);
-      const forwardDivRate = typeof priceData === "object" ? (priceData.divRate || 0) : 0;
+      let forwardDivRate = typeof priceData === "object" ? (priceData.divRate || 0) : 0;
+
+      // 🚀 LOGIC GHI ĐÈ TỪ SETTINGS NẰM Ở ĐÂY
+      if (overrides[ticker] !== undefined) {
+        forwardDivRate = (parseFloat(overrides[ticker]) / 100) * currentPrice;
+      }
 
       const currentValue = shares * currentPrice;
       const tickerDivs = (dividends || []).filter(d => d.ticker === ticker);
@@ -1051,9 +1055,14 @@ export default function WhaleOS() {
     const p = await DB.getPrices();
     if (s) {
       setSettings({
-        target_nav: s.target_nav ?? 200000, monthly_expenses: s.monthly_expenses ?? 1500,
-        expected_annual_return: s.expected_annual_return ?? 0.10, fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
-        fed_prob_hold: s.fed_prob_hold ?? 62, fed_prob_cut: s.fed_prob_cut ?? 33, fed_prob_hike: s.fed_prob_hike ?? 5,
+        target_nav: s.target_nav ?? 200000, 
+        monthly_expenses: s.monthly_expenses ?? 1500,
+        expected_annual_return: s.expected_annual_return ?? 0.10, 
+        fed_next_meeting: s.fed_next_meeting ?? "2026-06-18",
+        fed_prob_hold: s.fed_prob_hold ?? 62, 
+        fed_prob_cut: s.fed_prob_cut ?? 33, 
+        fed_prob_hike: s.fed_prob_hike ?? 5,
+        yield_overrides: s.yield_overrides || {}, // 💡 THÊM DÒNG NÀY
       });
     }
     if (i) setIncomes(i);
@@ -1157,8 +1166,8 @@ export default function WhaleOS() {
 
   // ── [YIELD-ON-COST] Compute YoC across all dividend-paying holdings ──
   const yocData = useMemo(
-    () => Quant.yieldOnCost(transactions, dividends, assets, prices),
-    [transactions, dividends, assets, prices]
+    () => Quant.yieldOnCost(transactions, dividends, assets, prices, settings.yield_overrides || {}),
+    [transactions, dividends, assets, prices, settings.yield_overrides]
   );
 
   // ── VIX market summary ─────────────────────────────────────
@@ -2312,6 +2321,25 @@ export default function WhaleOS() {
     const [newWeight, setNewWeight] = useState(0);
     const [priceInput, setPriceInput] = useState({});
 
+    // 💡 Thêm State cho phần Override
+    const [overrideTicker, setOverrideTicker] = useState("");
+    const [overrideValue, setOverrideValue] = useState("");
+
+    const addOverride = () => {
+      if (!overrideTicker || overrideValue === "") return;
+      const t = overrideTicker.toUpperCase().trim();
+      const updatedOverrides = { ...(s.yield_overrides || {}), [t]: parseFloat(overrideValue) };
+      setS({ ...s, yield_overrides: updatedOverrides });
+      setOverrideTicker("");
+      setOverrideValue("");
+    };
+
+    const removeOverride = (t) => {
+      const updatedOverrides = { ...(s.yield_overrides || {}) };
+      delete updatedOverrides[t];
+      setS({ ...s, yield_overrides: updatedOverrides });
+    };
+
     const saveSettings = async () => {
       setSettings(s);
       await save("settings", s);
@@ -2378,6 +2406,24 @@ export default function WhaleOS() {
             </Grid>
             <InputField label="Target Weight %" type="number" value={newWeight} onChange={setNewWeight} step="5" />
             <Btn onClick={addTicker} full variant="ghost">Add Ticker</Btn>
+          </div>
+        </Section>
+        <Section title="🛠️ Manual Yield Overrides (%)">
+          <div style={{ fontSize: 11, color: C.textDim, marginBottom: 8 }}>Ghi đè tỷ lệ % cổ tức cho các quỹ bị Yahoo tính sai (VD: SCHG = 0.42).</div>
+          
+          {Object.entries(s.yield_overrides || {}).map(([t, v]) => (
+            <div key={t} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, borderRadius: 6, padding: "6px 10px", marginBottom: 4, fontSize: 12 }}>
+              <span><strong style={{ color: C.cyan }}>{t}</strong> — {v}%</span>
+              <button onClick={() => removeOverride(t)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer" }}>✕</button>
+            </div>
+          ))}
+          
+          <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+            <Grid cols={2} gap={8}>
+              <InputField label="Ticker" value={overrideTicker} onChange={setOverrideTicker} placeholder="e.g. SCHG" />
+              <InputField label="Yield (%)" type="number" value={overrideValue} onChange={setOverrideValue} step="0.01" />
+            </Grid>
+            <Btn onClick={addOverride} full variant="ghost">Add Override</Btn>
           </div>
         </Section>
         <Section title="Manual Price Update">
