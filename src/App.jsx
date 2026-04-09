@@ -405,11 +405,27 @@ const currentYear = () => String(new Date().getFullYear());
 // ═══════════════════════════════════════════════════════════════
 
 function MetricCard({ label, value, sub, color = C.cyan, large }) {
+  // Cảm biến màn hình Mobile để tự động thu nhỏ font chữ và padding
+  const isMobile = window.innerWidth < 500;
+  const valFontSize = large ? (isMobile ? 22 : 28) : (isMobile ? 18 : 22);
+  const cardPadding = large ? (isMobile ? "14px 16px" : "20px 24px") : "14px 16px";
+
   return (
-    <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: large ? "20px 24px" : "14px 18px", flex: 1, minWidth: 0 }}>
+    <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: cardPadding, flex: 1, minWidth: 0 }}>
       <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: large ? 28 : 22, fontWeight: 700, color, fontFamily: "'IBM Plex Mono', monospace", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 2 }}>{sub}</div>}
+      <div style={{ 
+        fontSize: valFontSize, 
+        fontWeight: 700, 
+        color, 
+        fontFamily: "'IBM Plex Mono', monospace", 
+        marginTop: 4, 
+        // Đã xóa nowrap/ellipsis. Thêm wordBreak để cho phép số dài tự rớt xuống hàng
+        wordBreak: "break-word",
+        lineHeight: 1.2
+      }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }
@@ -1269,16 +1285,9 @@ export default function WhaleOS() {
       <Section title="🌐 Global Asset Allocation">
         {allHoldings.length > 0 ? (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 200px", minWidth: 180 }}>
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={allHoldings} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="55%" outerRadius="85%" paddingAngle={2} strokeWidth={0}>
-                    {allHoldings.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v) => `$${fmt(v)}`} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ textAlign: "center", marginTop: -40, fontSize: 20, fontWeight: 700, color: C.cyan, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalNAV, 0)}</div>
+            {/* ĐÃ THAY BẰNG COMPONENT CHUẨN */}
+            <div style={{ flex: "1 1 240px", minWidth: 200 }}>
+              <PortfolioDonut data={allHoldings} totalValue={totalNAV} accentColor={C.cyan} />
             </div>
             <div style={{ flex: "2 1 300px", minWidth: 260, overflow: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
