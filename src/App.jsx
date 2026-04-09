@@ -908,62 +908,92 @@ function vixLabel(v) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  VIX STRATEGY SIMULATOR COMPONENT
+//  ASYMMETRIC DCA SIMULATOR (VIX BẤT ĐỐI XỨNG - CUSTOM PLAN)
 // ═══════════════════════════════════════════════════════════════
-function VixStrategySimulator({ currentVix = 15, defaultDca = 1000 }) {
+function AsymmetricDcaSimulator({ currentVix = 15, defaultDca = 1150 }) {
   const [simVix, setSimVix] = useState(currentVix);
-  const [dca, setDca] = useState(defaultDca);
+  const [weeklyBudget, setWeeklyBudget] = useState(Math.round(defaultDca / 4));
+  const [cashReserve, setCashReserve] = useState(500); // Quỹ bắn tỉa giả định có sẵn $500
 
   useEffect(() => { setSimVix(currentVix); }, [currentVix]);
 
-  let spyiPct = 0; let schgPct = 0; let mode = ""; let modeColor = C.cyan;
-  if (simVix <= 20) { spyiPct = 100; schgPct = 0; mode = "🛡️ CHẾ ĐỘ XÂY KHIÊN (BUILD INCOME)"; modeColor = C.cyan; }
-  else if (simVix <= 24) { spyiPct = 70; schgPct = 30; mode = "⚖️ CHẾ ĐỘ CÂN BẰNG"; modeColor = C.amber; }
-  else if (simVix <= 28) { spyiPct = 30; schgPct = 70; mode = "⚖️ CHẾ ĐỘ CÂN BẰNG"; modeColor = C.amber; }
-  else { spyiPct = 0; schgPct = 100; mode = "🔥 CHẾ ĐỘ HỐT XÁC (BUY THE DIP)"; modeColor = C.red; }
+  let spyiAmt = 0, schgAmt = 0, toReserve = 0, fromReserve = 0;
+  let mode = "", modeColor = C.cyan;
 
-  const spyiAmt = (spyiPct / 100) * dca;
-  const schgAmt = (schgPct / 100) * dca;
+  // 🚀 LOGIC ĐÃ ĐƯỢC CHỈNH SỬA THEO ĐÚNG ORIGINAL PLAN CỦA BẠN
+  if (simVix < 20) {
+    mode = "🛡️ XÂY KHIÊN & TÍCH ĐẠN"; modeColor = C.cyan;
+    spyiAmt = weeklyBudget * 0.8;   // Ưu tiên 80% SPYI
+    toReserve = weeklyBudget * 0.2; // Cất 20% vào quỹ chờ thời (0% SCHG)
+  } else if (simVix <= 24) {
+    mode = "⚖️ DCA CÂN BẰNG"; modeColor = C.amber;
+    spyiAmt = weeklyBudget * 0.6;   // Theo plan gốc: 60% SPYI
+    schgAmt = weeklyBudget * 0.4;   // Theo plan gốc: 40% SCHG
+  } else if (simVix <= 28) {
+    mode = "⚠️ BẮT ĐÁY NHẸ"; modeColor = "#F97316"; 
+    spyiAmt = weeklyBudget * 0.2;
+    schgAmt = weeklyBudget * 0.8 + (cashReserve * 0.3);
+    fromReserve = cashReserve * 0.3;
+  } else {
+    mode = "🔥 HỐT XÁC (ALL-IN SCHG)"; modeColor = C.red;
+    schgAmt = weeklyBudget + cashReserve;
+    fromReserve = cashReserve;
+  }
+
+  const totalDeployed = spyiAmt + schgAmt;
+  const finalReserve = cashReserve + toReserve - fromReserve;
 
   return (
     <div style={{ background: `linear-gradient(135deg, ${C.card}, ${C.cardAlt})`, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px 20px", marginTop: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Trình Mô Phỏng Phân Bổ DCA</div>
-          <div style={{ fontSize: 11, color: C.textDim }}>Dựa trên VIX: Dịch chuyển từ Tài sản phòng thủ (SPYI) sang Tăng trưởng (SCHG).</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Chiến Thuật DCA Bất Đối Xứng (Weekly)</div>
+          <div style={{ fontSize: 11, color: C.textDim, maxWidth: 300 }}>Thuật toán tự động tính tỷ trọng giải ngân và tích lũy đạn dựa vào mức độ sợ hãi của thị trường.</div>
         </div>
-        <div style={{ display: "flex", gap: 16, fontSize: 11, background: C.bg, padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
-          <div style={{ textAlign: "right" }}><div style={{ color: C.textDim }}>TỔNG DCA</div><div style={{ fontWeight: 700, color: C.text }}>${fmt(dca, 0)}</div></div>
-          <div style={{ textAlign: "right" }}><div style={{ color: C.cyan }}>VÀO SPYI</div><div style={{ fontWeight: 700, color: C.text }}>${fmt(spyiAmt, 0)}</div></div>
-          <div style={{ textAlign: "right" }}><div style={{ color: C.green }}>VÀO SCHG</div><div style={{ fontWeight: 700, color: C.text }}>${fmt(schgAmt, 0)}</div></div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, background: `${modeColor}15`, color: modeColor, padding: "6px 12px", borderRadius: 8, border: `1px solid ${modeColor}40`, letterSpacing: "0.05em" }}>
+            {mode}
+          </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", height: 24, borderRadius: 12, overflow: "hidden", marginBottom: 12, background: C.cardAlt, border: `1px solid ${C.borderLight}` }}>
-        <div style={{ width: `${spyiPct}%`, background: `linear-gradient(90deg, ${C.cyanDim}, ${C.cyan})`, display: "flex", alignItems: "center", paddingLeft: 12, fontSize: 10, fontWeight: 700, color: C.bg, transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1)" }}>{spyiPct > 0 ? `SPYI ${spyiPct}%` : ""}</div>
-        <div style={{ width: `${schgPct}%`, background: `linear-gradient(90deg, ${C.greenDim}, ${C.green})`, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 12, fontSize: 10, fontWeight: 700, color: C.bg, transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1)" }}>{schgPct > 0 ? `SCHG ${schgPct}%` : ""}</div>
-      </div>
+      <Grid cols={4} gap={8}>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+          <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", marginBottom: 4 }}>Tổng giải ngân tuần</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(totalDeployed, 0)}</div>
+        </div>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+          <div style={{ fontSize: 9, color: C.cyan, textTransform: "uppercase", marginBottom: 4 }}>Vào SPYI (Income)</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(spyiAmt, 0)}</div>
+        </div>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+          <div style={{ fontSize: 9, color: C.green, textTransform: "uppercase", marginBottom: 4 }}>Vào SCHG (Growth)</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(schgAmt, 0)}</div>
+        </div>
+        <div style={{ background: C.bg, padding: "8px 12px", borderRadius: 8, border: `1px solid ${toReserve > 0 ? C.purple : fromReserve > 0 ? C.red : C.borderLight}` }}>
+          <div style={{ fontSize: 9, color: C.purple, textTransform: "uppercase", marginBottom: 4 }}>Quỹ bắn tỉa (USFR)</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
+            ${fmt(finalReserve, 0)}
+            {toReserve > 0 && <span style={{ fontSize: 10, color: C.purple, marginLeft: 4 }}>+{fmt(toReserve, 0)}</span>}
+            {fromReserve > 0 && <span style={{ fontSize: 10, color: C.red, marginLeft: 4 }}>-{fmt(fromReserve, 0)}</span>}
+          </div>
+        </div>
+      </Grid>
 
-      <div style={{ textAlign: "center", marginBottom: 20 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, background: `${modeColor}15`, color: modeColor, padding: "4px 12px", borderRadius: 12, border: `1px solid ${modeColor}40`, letterSpacing: "0.05em" }}>{mode}</span>
-      </div>
-
-      <Grid cols={2} gap={16}>
-        <div style={{ background: C.bg, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.textDim, marginBottom: 8, textTransform: "uppercase" }}>
-            <span>Chỉ số VIX (Kéo để test)</span>
-            <span style={{ fontWeight: 700, color: C.amber, fontFamily: "'IBM Plex Mono', monospace" }}>{simVix}</span>
+      <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 200px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>
+            <span>Chỉ số VIX (Kéo test)</span><span style={{ color: C.amber, fontWeight: 700 }}>{simVix}</span>
           </div>
           <input type="range" min="10" max="50" step="0.5" value={simVix} onChange={e => setSimVix(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.amber, cursor: "pointer" }} />
         </div>
-        <div style={{ background: C.bg, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.textDim, marginBottom: 8, textTransform: "uppercase" }}>
-            <span>Ngân sách DCA / Tháng</span>
-            <span style={{ fontWeight: 700, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${fmt(dca, 0)}</span>
+        <div style={{ flex: "1 1 200px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>
+            <span>Đạn sẵn sàng (Quỹ Bắn Tỉa)</span><span style={{ color: C.purple, fontWeight: 700 }}>${fmt(cashReserve, 0)}</span>
           </div>
-          <input type="range" min="100" max="5000" step="50" value={dca} onChange={e => setDca(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.textMid, cursor: "pointer" }} />
+          <input type="range" min="0" max="3000" step="100" value={cashReserve} onChange={e => setCashReserve(parseFloat(e.target.value))} style={{ width: "100%", accentColor: C.purple, cursor: "pointer" }} />
         </div>
-      </Grid>
+      </div>
     </div>
   );
 }
@@ -1306,8 +1336,8 @@ export default function WhaleOS() {
           <strong style={{ color: C.cyan }}>📊 Bull/Bear Summary:</strong> {marketSummary}
         </div>
         
-        {/* TÍNH NĂNG MỚI CHÈN VÀO ĐÂY */}
-        <VixStrategySimulator currentVix={vixData.current} defaultDca={Math.max(avgSurplus, 500)} />
+        {/* TÍNH NĂNG DCA BẤT ĐỐI XỨNG */}
+        <AsymmetricDcaSimulator currentVix={vixData.current} defaultDca={Math.max(avgSurplus, 500)} />
         
       </Section>
 
