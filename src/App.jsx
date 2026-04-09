@@ -316,7 +316,7 @@ const Quant = {
   // ═══════════════════════════════════════════════════════════
   //  YIELD-ON-COST ENGINE
   // ═══════════════════════════════════════════════════════════
-yieldOnCost(transactions, dividends, assets, prices) {
+  yieldOnCost(transactions, dividends, assets, prices, overrides = {}) {
     const costInfo = {};
     const sortedTxns = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
     
@@ -353,8 +353,8 @@ yieldOnCost(transactions, dividends, assets, prices) {
       const currentPrice = typeof priceData === "object" ? (priceData.price || 0) : (parseFloat(priceData) || 0);
       let forwardDivRate = typeof priceData === "object" ? (priceData.divRate || 0) : 0;
 
-      // 🚀 LOGIC GHI ĐÈ TỪ SETTINGS NẰM Ở ĐÂY
-      if (overrides[ticker] !== undefined) {
+      // 🚀 LOGIC GHI ĐÈ TỪ SETTINGS (Đã được bảo vệ kỹ)
+      if (overrides && overrides[ticker] !== undefined) {
         forwardDivRate = (parseFloat(overrides[ticker]) / 100) * currentPrice;
       }
 
@@ -362,9 +362,8 @@ yieldOnCost(transactions, dividends, assets, prices) {
       const tickerDivs = (dividends || []).filter(d => d.ticker === ticker);
       const totalReceived = tickerDivs.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
 
-      // --- LOGIC CHUẨN XÁC VỚI FORWARD DATA ---
-      const forwardAnnualIncome = shares * forwardDivRate; // Thu nhập 1 năm tới
-      const yoc = cost > 0 ? (forwardAnnualIncome / cost) * 100 : 0; // YoC dựa trên giá vốn
+      const forwardAnnualIncome = shares * forwardDivRate; 
+      const yoc = cost > 0 ? (forwardAnnualIncome / cost) * 100 : 0; 
       const currentYield = currentPrice > 0 ? (forwardDivRate / currentPrice) * 100 : 0;
       const avgCostPerShare = shares > 0 ? cost / shares : 0;
 
@@ -384,7 +383,7 @@ yieldOnCost(transactions, dividends, assets, prices) {
     const portfolioCurrentYield = totalCurrentValue > 0 ? (totalForwardAnnualDivs / totalCurrentValue) * 100 : 0;
     
     return { rows, totalCost, totalForwardAnnualDivs, totalCurrentValue, portfolioYoC, portfolioCurrentYield };
-  }
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════
