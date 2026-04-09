@@ -559,45 +559,92 @@ function ViewToggle({ value, onChange, coreLabel = "🎯 Core ETFs", globalLabel
 
 function PortfolioDonut({ data, totalValue, accentColor = C.cyan, colorOffset = 0 }) {
   const hasData = data.length > 0 && totalValue > 0;
-  const renderCustomizedLabel = (props) => {
+  
+  const renderLabels = (props) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, percent, index, payload } = props;
-    if (percent < 0.03) return null;
+    
+    // 1. Chuyển % vào TRONG lõi của biểu đồ để tiết kiệm không gian 2 bên
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const ix = cx + radius * Math.cos(-midAngle * Math.PI / 180);
+    const iy = cy + radius * Math.sin(-midAngle * Math.PI / 180);
+
+    // Phát hiện người dùng đang dùng Mobile (màn hình < 500px)
+    const isMobile = window.innerWidth < 500;
+
+    // 2. Ẩn đường kẻ ngoài đối với các mã chiếm < 2% để biểu đồ không bị "nhím"
+    if (percent < 0.02) return (
+       <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={isMobile ? 8 : 10} fontWeight="bold">
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
+
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-RADIAN * midAngle);
     const cos = Math.cos(-RADIAN * midAngle);
-    const sx = cx + (outerRadius + 5) * cos;
-    const sy = cy + (outerRadius + 5) * sin;
-    const mx = cx + (outerRadius + 20) * cos;
-    const my = cy + (outerRadius + 20) * sin;
-    const ex = mx + (cos >= 0 ? 1 : -1) * 22;
+    
+    // 3. Tự động rút ngắn đường kẻ chỉ báo nếu là Mobile
+    const lineLen = isMobile ? 6 : 12;
+    const horizLen = isMobile ? 8 : 15;
+
+    const sx = cx + (outerRadius + 2) * cos;
+    const sy = cy + (outerRadius + 2) * sin;
+    const mx = cx + (outerRadius + lineLen) * cos;
+    const my = cy + (outerRadius + lineLen) * sin;
+    const ex = mx + (cos >= 0 ? 1 : -1) * horizLen;
     const ey = my;
-    const textAnchor = cos >= 0 ? 'start' : 'end';
     const color = DONUT_COLORS[(index + colorOffset) % DONUT_COLORS.length];
+
     return (
       <g>
+        {/* Render % ở bên trong */}
+        <text x={ix} y={iy} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={isMobile ? 9 : 11} fontWeight="bold">
+          {`${(percent * 100).toFixed(0)}%`}
+        </text>
+        {/* Render Ticker ở bên ngoài với font chữ và khoảng cách tự thu nhỏ */}
         <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={color} fill="none" strokeWidth={1.5} />
-        <circle cx={ex} cy={ey} r={2.5} fill={color} />
-        <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} textAnchor={textAnchor} fill={C.text} fontSize={11} fontWeight="700" fontFamily="'IBM Plex Mono', monospace">
-          {`${payload.ticker} (${(percent * 100).toFixed(0)}%)`}
+        <circle cx={ex} cy={ey} r={isMobile ? 1.5 : 2.5} fill={color} />
+        <text 
+          x={ex + (cos >= 0 ? 1 : -1) * (isMobile ? 4 : 8)} 
+          y={ey} 
+          dy={3} 
+          textAnchor={cos >= 0 ? 'start' : 'end'} 
+          fill={C.text} 
+          fontSize={isMobile ? 9 : 11} 
+          fontWeight="700" 
+          fontFamily="'IBM Plex Mono', monospace"
+        >
+          {payload.ticker}
         </text>
       </g>
     );
   };
+
   return (
-    <div style={{ position: "relative", width: "100%" }}>
+    <div style={{ position: "relative", width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <ResponsiveContainer width="100%" height={320}>
         <PieChart>
           {hasData ? (
-            <Pie data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" paddingAngle={3} strokeWidth={0} label={renderCustomizedLabel} labelLine={false}>
+            <Pie 
+              data={data} dataKey="value" nameKey="ticker" cx="50%" cy="50%" 
+              innerRadius="55%" outerRadius="80%" paddingAngle={3} strokeWidth={0}
+              label={renderLabels} labelLine={false}
+            >
               {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[(i + colorOffset) % DONUT_COLORS.length]} />)}
             </Pie>
           ) : (
-            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="40%" outerRadius="70%" strokeWidth={0}><Cell fill={C.border} /></Pie>
+            <Pie data={[{ value: 1 }]} cx="50%" cy="50%" innerRadius="55%" outerRadius="80%" strokeWidth={0}><Cell fill={C.border} /></Pie>
           )}
+          <Tooltip 
+            formatter={(val, name, props) => [`$${fmt(val, 0)} (${props.payload.weight.toFixed(1)}%)`, name]}
+            contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} 
+          />
         </PieChart>
       </ResponsiveContainer>
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", textAlign: "center", pointerEvents: "none" }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+      
+      {/* 4. Tổng NAV ở tâm cũng tự động căn nhỏ lại trên Mobile */}
+      <div style={{ position: "absolute", textAlign: "center", pointerEvents: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>TOTAL NAV</div>
+        <div style={{ fontSize: window.innerWidth < 500 ? 18 : 22, fontWeight: 700, color: accentColor, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.2 }}>
           {hasData ? `$${fmt(totalValue, 0)}` : "$0"}
         </div>
       </div>
@@ -1307,7 +1354,7 @@ export default function WhaleOS() {
               <MetricCard
                 label="Expected Income"
                 value={`$${fmt(yocData.totalForwardAnnualDivs, 0)}`}
-                sub={`~$${fmt(yocData.totalForwardAnnualDivs / 12, 0)}/mo`}
+                sub={`~$${fmt(yocData.totalForwardAnnualDivs / 12, 1)}/mo`}
                 color={C.green}
               />
               <MetricCard
