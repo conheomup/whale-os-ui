@@ -487,7 +487,8 @@ function SvgGauge({ value, max = 50, label, subLabel, thresholds }) {
     <div style={{ textAlign: "center" }}>
       <svg viewBox="0 0 200 150" style={{ width: "100%", maxWidth: 220 }}>
         {zones.map((z, i) => (
-          <path key={i} d={makeArc(z.from, Math.min(z.to, 1))} fill="none" stroke={z.color + "30"} strokeWidth="14" strokeLinecap="butt" />
+          // Thay đổi opacity = 0.35 thay vì cộng chuỗi Hex để màu lên rực rỡ hơn
+          <path key={i} d={makeArc(z.from, Math.min(z.to, 1))} fill="none" stroke={z.color} strokeOpacity="0.35" strokeWidth="14" strokeLinecap="butt" />
         ))}
         {pct > 0.005 && (
           <path d={makeArc(0, pct)} fill="none" stroke={activeColor} strokeWidth="7" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 5px ${activeColor}80)` }} />
